@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">微信分组·重生</string>
+    <string name="xposed_description">微信会话/联系人分组</string>
+
+    <string name="settings_groups">分组管理</string>
+    <string name="settings_signatures">微信签名配置</string>
+    <string name="settings_kill_wechat">强杀微信</string>
+    <string name="settings_kill_wechat_msg">将强制停止微信进程。改完签名 / 分组后重新打开微信即可生效。确定继续？</string>
+    <string name="settings_kill_wechat_confirm">强制停止</string>
+    <string name="settings_kill_wechat_done">已强制停止微信</string>
+    <string name="settings_kill_wechat_fail">未能提权强杀（需 root），已尝试后台方式；请手动结束微信</string>
+    <string name="settings_about">关于</string>
+    <string name="settings_hint">本模块接管微信会话列表，在列表顶部插入可点开的「收纳组」。
+使用前请在「微信签名配置」中填入你手机微信版本对应的类/方法签名，否则分组不会生效。</string>
+
+    <string name="group_manage_title">分组管理</string>
+    <string name="group_add">新建分组</string>
+    <string name="group_name_hint">分组名称</string>
+    <string name="group_rename">重命名</string>
+    <string name="group_delete">删除</string>
+    <string name="group_pin">置顶</string>
+    <string name="group_mute">免打扰</string>
+    <string name="group_members">管理成员</string>
+    <string name="group_empty">还没有分组，点下方「新建分组」按钮创建一个。</string>
+    <string name="group_members_title">成员（%1$d）</string>
+    <string name="group_members_empty">该分组还没有成员</string>
+    <string name="group_members_remove_hint">点击成员可将其移出分组</string>
+
+    <string name="signature_title">微信签名配置</string>
+    <string name="signature_hint">把 assets 里的 wechat_signatures.json 按你微信版本填写后粘贴到这里保存。
+稳定的类名（com.tencent.mm.ui.conversation.* 等）已默认；带 TODO 的方法签名需按你的微信版本补全。</string>
+    <string name="signature_save">保存</string>
+    <string name="signature_reset">恢复默认</string>
+    <string name="signature_saved">已保存，重启微信与 LSPosed 生效。</string>
+    <string name="signature_bad_json">JSON 格式错误，未保存。</string>
+
+    <string name="about_text">微信分组·重生\n\n在微信会话列表里创建「收纳组」，点进去就是二级页面，效果类似微信自带的「折叠的群聊」。
+所有分组数据仅保存在本机（模块 App 私有存储，经 /data/local/tmp 镜像文件在模块与微信进程间共享）。</string>
+</resources>

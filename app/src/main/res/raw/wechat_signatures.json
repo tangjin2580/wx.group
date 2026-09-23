@@ -1,0 +1,177 @@
+{
+  "wechatVersion": "8.0.78",
+  "revision": 6,
+  "classes": {
+    "ConversationUI": "com.tencent.mm.ui.conversation.BaseConversationUI",
+    "ConversationBoxUI": "com.tencent.mm.ui.conversation.ConvBoxServiceConversationUI",
+    "LauncherUI": "com.tencent.mm.ui.LauncherUI",
+    "MvvmList": "com.tencent.mm.plugin.mvvmlist.MvvmList",
+    "MvvmConvList": "com.tencent.mm.ui.conversation.adapter.MvvmConvList",
+    "Storage": "com.tencent.mm.storage",
+    "ConversationMenuListener": "com.tencent.mm.ui.conversation.s3",
+    "ConversationMenuCallback": "com.tencent.mm.ui.conversation.q3",
+    "ConversationMenuItem": "kj5.j4",
+    "ConversationList": "com.tencent.mm.ui.conversation.ConversationListView",
+    "ConversationAdapter": "jo5/y0",
+    "ConversationAdapterRv": "com.tencent.mm.view.recyclerview.WxRecyclerAdapter"
+  },
+  "_注释": "revision 变更会触发模块 App 用内置签名覆盖本地已保存的副本，换微信版本时把 revision +1。\n\n===== 会话列表结构（8.0.78 运行时实测，务必以这条为准）=====\n会话列表是 **ListView**，适配器是 **jo5/y0（extends android.widget.BaseAdapter）**。来源：对 AbsListView.setAdapter 的诊断日志：\n    AbsListView.setAdapter: jo5.y0 @ConversationListView\nConversationListView extends android.widget.ListView。\n（另有一条 RecyclerView 分支（适配器 po5/u → zs3/c0 → com.tencent.mm.view.recyclerview.WxRecyclerAdapter → vv5/n0），但本机 8.0.78 走的不是它。ConversationAdapterRv 那条保留给其它机型/版本，两条路径都有实例守卫，互不干扰。）\n\n===== jo5/y0 的数据布局 =====\n字段 q（jo5/f）：\n  q.d = List<jo5/z>   每行 z.d = com.tencent.mm.storage.k4 会话对象，k4.i1() = talker\n  q.a = 缓存行数（原始 getCount 返回它；刷新过程中可能短暂过期，所以本模块用 q.d.size 作权威行数）\njo5/y0.getView(pos, convertView, parent) 直接按 pos 索引 q.d（不经过 getItem），因此虚位重映射只要改写 args[0] 即可。\n\n===== 本模块的接入方式（虚位重映射）=====\n[收纳组行A] [A的成员(展开时)] [收纳组行B] ... + 其余会话；未展开分组的成员从原位隐藏（收拢）。\n改写这些位置方法：\n  jo5/y0（自身声明）  : getCount()I / getView(ILandroid/view/View;Landroid/view/ViewGroup;)Landroid/view/View; / getItem(I)Lcom/tencent/mm/storage/k4;\n  BaseAdapter（继承）  : getItemViewType(I)I → 收纳组行返回 1 / getViewTypeCount()I → +1\n  getItemId(I)J 恒返回 0，无需处理。\n⚠️ 不要 hook isEnabled(I) 让它返回 false —— 那会让 AbsListView.onInterceptTouchEvent 不进 TOUCH_MODE_DOWN，\n   触摸被行 View 吃掉：从收纳组行上起手拖动无法滚动列表，而且行必须自己 clickable，和微信的点击监听器抢事件 → 偶发闪退。\n   收纳组行照旧「可点」，点击统一由框架级 AdapterView.performItemClick 拦截处理。\n\n===== 两条必须遵守的渲染/派发铁律 =====\n1) 绝不让「收纳组行」和「真实会话行」互相复用 convertView。\n   ListView 按 getItemViewType 分桶回收；一旦这个 hook 没生效，我们的 FolderHolder 行会被当成\n   会话行的 convertView 交给微信的 getView —— 它 cast/绑定失败抛异常，而异常兜底又只能原样返回，\n   于是那一行**显示成了收纳组行**（用户原话：点分组下面的会话，那行就变成展开/收纳）。\n   代码里做了双保险：getView 拿到 tag 是 FolderHolder 的 convertView 就丢弃（传 null 让微信重建）。\n2) 判断「点的是不是收纳组行」要看 **被点的 View 的 tag**（我们放了 FolderHolder），不要看 position。\n   ListView 的 position 是按下瞬间抓的（mTouchPosition），中间只要刷新过一次列表，\n   按下位置和抬手位置就指向两行不同的行 —— 表现就是「点成员行却把分组展开/折叠了」。\n注意：BaseAdapter 的这几个方法要对**所有** BaseAdapter 生效，代码里用「实例守卫 + 非 bridge 方法」限流到会话适配器；Kotlin 会为 getItem 生成 bridge 方法，挂载时必须跳过 isBridge() 的那一个，否则同一次调用会回调两次导致位置被二次改写。\n收纳组行的 LayoutParams 必须是 android.widget.AbsListView$LayoutParams（ListView.setupChild 会硬转，否则 ClassCastException）。\n\n===== 菜单（长按会话）=====\n链路（8.0.78 运行时实测）：\n  ConversationListView 长按 → s3.onItemLongClick → eu5/s0（= com/tencent/mm/ui/widget/menu/MMPopupMenu）\n    → 回调监听器 s3.onCreateContextMenu(kj5/i4, view, info)   ← 本模块在这里 menu.add() 加「添加到分组 / 新建分组」\n    → 用户点某项 → eu5/b0.onClick → s0.v.onMMMenuItemSelected(item, position)\n其中 s0.v 就是 s3 的字段 n（8.0.78 = com.tencent.mm.ui.conversation.q3）。\n⚠️ 结论：菜单项自己的 MenuItem.OnMenuItemClickListener **永远收不到点击**（kj5/j4.c() 不在这条链路上），\n   所以必须挂实现类的 onMMMenuItemSelected(MenuItem,int)。实现类名字随版本变，运行时从 s3 实例的字段里翻出来即可。\n菜单容器 kj5/i4 实现 android.view.ContextMenu；它的 add(...) 返回 new kj5/j4（字段 z = OnMenuItemClickListener，\n方法 c()Z 才回调它）—— 正因为 add 返回的就是最终渲染的那个 item，`menuActions[item] = 动作` 这种映射是可靠的。\n注入的菜单项：添加到分组（弹分组列表，选哪个就进哪个）、新建分组（输入名字，建完直接收进去）、\n移出分组「X」（仅当该会话已在某分组里时出现）。分组归属是互斥的（收纳组 = 文件夹语义），\n所以「加入新分组」会自动把它从旧分组摘掉，并提示「已从 X 移到 Y」。\n\n===== 分组顺序 =====\nWxGroup 有 order 字段（越小越靠前）。排序规则只有一个实现：GroupStore.sortForDisplay\n（模块 App 的列表和微信 Hook 共用，避免两边排得不一样）：\n    置顶优先 → order → 创建时间（从 id 里取）→ 名字\norder=0 表示「没手动排过」，此时用 id 里编码的毫秒时间戳兜底（本模块建的 id 是 grp_<毫秒>，\n所以默认就是稳定的创建顺序；旧版 grp_legacy_<hash> 取不到时间，排最后再按名字）。\n用户排过之后所有分组都会被写上显式 order，顺序完全听用户的。新建分组取 max(order)+1 排最后。\n⚠️ 以前是 thenBy { it.name }，中英混排的名字会排出「Work / 医保 / 国际」这种用户看不懂的顺序，\n   而且看起来像分组被重排了 —— 已改成上面这套。\n排序入口：长按收纳组行 → 上移 / 下移 / 拖动排序…（拖动排序打开 SortGroupsActivity，\n交互照抄微信「通讯录→标签→标签排序」的 ☰ 拖拽把手）。\n⚠️ SortGroupsActivity 里判定「拖到第几行」不能读子 View 的 getLocationOnScreen：\n   removeView/addView 之后还没 layout，坐标是旧的，同一个拖动会被反复判成换行、来回弹。\n   用「容器屏幕顶 + 固定行高」算，才单调不抖。\n\n===== 引导（bootstrap）注意 =====\n从 AbsListView.setAdapter 的 args[0].classLoader 拿运行时加载器时**必须校验**：\n微信自己的对话框 / 其它列表用的是 framework ListView + ArrayAdapter，那类 adapter 的 classLoader 是\nBootClassLoader。不校验就会把它误记成运行时加载器，既装不上 Hook，又污染 hookedLoader\n（之后的真加载器进来时 hookedLoader 已经被占，Hook 就再也不挂了）。\n校验方式：能不能 findClass 出 ConversationAdapter。注意签名里是 \"jo5/y0\" 这种斜杠写法，\nClass.forName 不认斜杠，必须走 ReflectionUtil.findClass 做归一化。\n\n===== methods 区说明 =====\n下方 Conversation* 的 methodName 仅作**文档记录**（本模块实际按「方法名 + 参数个数」自动定位，不依赖这里填的名字，只有 classes 映射会被读取）。留空或含 TODO 的会被跳过。",
+  "methods": {
+    "ConversationOnCreateContextMenu": {
+      "class": "ConversationMenuListener",
+      "methodName": "onCreateContextMenu",
+      "params": [
+        "android.view.ContextMenu",
+        "android.view.View",
+        "android.view.ContextMenu$ContextMenuInfo"
+      ],
+      "ret": "void"
+    },
+    "ConversationGetCount": {
+      "class": "ConversationAdapter",
+      "methodName": "getCount",
+      "params": [],
+      "ret": "int"
+    },
+    "ConversationGetView": {
+      "class": "ConversationAdapter",
+      "methodName": "getView",
+      "params": [
+        "int",
+        "android.view.View",
+        "android.view.ViewGroup"
+      ],
+      "ret": "android.view.View"
+    },
+    "ConversationGetItem": {
+      "class": "ConversationAdapter",
+      "methodName": "getItem",
+      "params": [
+        "int"
+      ],
+      "ret": "com.tencent.mm.storage.k4"
+    },
+    "ConversationGetItemId": {
+      "class": "ConversationAdapter",
+      "methodName": "getItemId",
+      "params": [
+        "int"
+      ],
+      "ret": "long"
+    },
+    "ConversationGetItemViewType": {
+      "class": "ConversationAdapter",
+      "methodName": "getItemViewType",
+      "params": [
+        "int"
+      ],
+      "ret": "int"
+    },
+    "ConversationGetViewTypeCount": {
+      "class": "ConversationAdapter",
+      "methodName": "getViewTypeCount",
+      "params": [],
+      "ret": "int"
+    },
+    "ConversationIsEnabled": {
+      "class": "ConversationAdapter",
+      "methodName": "isEnabled",
+      "params": [
+        "int"
+      ],
+      "ret": "boolean"
+    },
+    "ConversationAreAllItemsEnabled": {
+      "class": "ConversationAdapter",
+      "methodName": "areAllItemsEnabled",
+      "params": [],
+      "ret": "boolean"
+    },
+    "ConversationRvItemCount": {
+      "class": "ConversationAdapterRv",
+      "methodName": "getItemCount",
+      "params": [],
+      "ret": "int"
+    },
+    "ConversationRvItemViewType": {
+      "class": "ConversationAdapterRv",
+      "methodName": "getItemViewType",
+      "params": [
+        "int"
+      ],
+      "ret": "int"
+    },
+    "ConversationRvCreateViewHolder": {
+      "class": "ConversationAdapterRv",
+      "methodName": "onCreateViewHolder",
+      "params": [
+        "android.view.ViewGroup",
+        "int"
+      ],
+      "ret": "androidx.recyclerview.widget.RecyclerView$ViewHolder"
+    },
+    "ConversationRvBindViewHolder": {
+      "class": "ConversationAdapterRv",
+      "methodName": "onBindViewHolder",
+      "params": [
+        "androidx.recyclerview.widget.RecyclerView$ViewHolder",
+        "int"
+      ],
+      "ret": "void"
+    },
+    "ConversationBoxOnCreateContextMenu": {
+      "class": "ConversationBoxUI",
+      "methodName": "",
+      "params": [
+        "android.view.ContextMenu",
+        "android.view.View",
+        "android.view.ContextMenu$ContextMenuInfo"
+      ],
+      "ret": "void"
+    },
+    "ConversationItemOnClick": {
+      "class": "ConversationUI",
+      "methodName": "",
+      "params": [
+        "android.view.View"
+      ],
+      "ret": "void"
+    },
+    "ConversationOnMenuItemSelected": {
+      "class": "ConversationUI",
+      "methodName": "",
+      "params": [
+        "int",
+        "android.view.MenuItem"
+      ],
+      "ret": "boolean"
+    },
+    "ConversationBoxOnMenuItemSelected": {
+      "class": "ConversationBoxUI",
+      "methodName": "",
+      "params": [
+        "int",
+        "android.view.MenuItem"
+      ],
+      "ret": "boolean"
+    },
+    "HomeUiUpdateSettingTitle": {
+      "class": "LauncherUI",
+      "methodName": "",
+      "params": [],
+      "ret": "void"
+    },
+    "OpenOfficialAccounts": {
+      "class": "LauncherUI",
+      "methodName": "",
+      "params": [],
+      "ret": "void"
+    },
+    "OpenServiceOfficialAccounts": {
+      "class": "LauncherUI",
+      "methodName": "",
+      "params": [],
+      "ret": "void"
+    }
+  }
+}

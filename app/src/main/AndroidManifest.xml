@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:name=".WxGroupApp"
+        android:allowBackup="true"
+        android:icon="@android:drawable/ic_menu_sort_by_size"
+        android:label="@string/app_name"
+        android:theme="@style/AppTheme"
+        android:forceQueryable="true"
+        tools:replace="android:icon,android:label,android:theme">
+
+        <!-- 模块入口通过 META-INF/xposed/java_init.list 声明（libxposed 102），
+             不再使用 legacy 的 xposedmodule meta-data / assets/xposed_init。 -->
+
+        <!-- ===== 设置入口 ===== -->
+        <activity
+            android:name=".ui.SettingsActivity"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".ui.GroupManageActivity"
+            android:exported="true" />
+        <activity
+            android:name=".ui.SortGroupsActivity"
+            android:exported="true" />
+        <activity
+            android:name=".ui.SignatureActivity"
+            android:exported="true" />
+
+        <!-- 跨进程数据桥：让微信能读取本模块在私有存储里的分组/签名 -->
+        <provider
+            android:name=".core.GroupProvider"
+            android:authorities="io.github.wxgroup.reborn.groups"
+            android:exported="true"
+            android:grantUriPermissions="false" />
+    </application>
+</manifest>

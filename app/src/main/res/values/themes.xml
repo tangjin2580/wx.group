@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 模块自身 App（设置/分组管理/签名编辑）用的 AppCompat 主题。
+         仅作用于模块 App 的 Activity；不影响注入到微信的 Hook 代码。 -->
+    <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
+        <item name="colorPrimary">@android:color/holo_green_dark</item>
+        <item name="colorPrimaryDark">@android:color/holo_green_dark</item>
+        <item name="colorAccent">@android:color/holo_green_light</item>
+    </style>
+</resources>

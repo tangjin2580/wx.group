@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 模块默认作用域：仅微信 -->
+    <string-array name="xposed_scope">
+        <item>com.tencent.mm</item>
+    </string-array>
+</resources>

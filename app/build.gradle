@@ -1,0 +1,51 @@
+apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+
+android {
+    namespace 'io.github.wxgroup.reborn'
+    compileSdk 37
+    buildToolsVersion '36.0.0'
+
+    defaultConfig {
+        applicationId 'io.github.wxgroup.reborn'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '0.1.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    // Xposed 模块本身不需要被 shrunk 掉入口
+    packagingOptions {
+        resources {
+            excludes += ['META-INF/*.kotlin_module']
+        }
+    }
+}
+
+dependencies {
+    // libxposed（LSPosed 新版）API 102：编译期 stub，运行期由框架提供。
+    // 旧版 de.robv.android.xposed:api:82 已移除 —— 模块入口用 XposedModule（见 MainHook.kt），
+    // hook 用 io.github.wxgroup.reborn.xp 下的薄封装（backed by libxposed 102）。
+    compileOnly 'io.github.libxposed:api:102.0.0'
+
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+}

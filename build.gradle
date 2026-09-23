@@ -1,0 +1,14 @@
+// 微信会话分组模块（libxposed API 102）
+// 主模块仅依赖官方 Xposed API；微信版本相关的签名走 assets/wechat_signatures.json，运行时读取。
+buildscript {
+    ext.kotlin_version = '1.9.22'
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://api.xposed.info' }
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.13.2'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
