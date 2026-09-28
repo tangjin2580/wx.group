@@ -14,10 +14,35 @@ android {
         versionName '0.1.0'
     }
 
+    // ── 正式签名（条件启用）──────────────────────────────────────────────
+    // 仅当环境变量 KEYSTORE_FILE / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD
+    // 齐备时才启用签名；否则 release 出未签名包，构建不失败。
+    // CI 通过 GitHub Secrets 注入（见 .github/workflows/main.yml 的 Decode signing key）。
+    def keystoreFileEnv = System.getenv("KEYSTORE_FILE")
+    def keystorePwEnv = System.getenv("KEYSTORE_PASSWORD")
+    def keyAliasEnv = System.getenv("KEY_ALIAS")
+    def keyPwEnv = System.getenv("KEY_PASSWORD")
+    def hasReleaseSigning = keystoreFileEnv != null && keystorePwEnv != null &&
+            keyAliasEnv != null && keyPwEnv != null
+
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile file(keystoreFileEnv)
+                storePassword keystorePwEnv
+                keyAlias keyAliasEnv
+                keyPassword keyPwEnv
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
         }
         debug {
             minifyEnabled false
