@@ -151,7 +151,27 @@ export ANDROID_SDK_ROOT=/Users/Mr.li/Library/Android/sdk   # 换成你自己的 
 
 > 含 `"TODO"` 或为空字符串的 `methodName` 会被自动跳过，不会尝试 hook。
 
-### 微信 8.0.78 实测签名（可直接用）
+### 微信 8.0.79 实测签名（当前内置，2026-10-17 适配）
+
+8.0.79（versionCode 3182）混淆名整体重排（`jo5` 包被协程 lambda 类占用），逐项改名如下；均为静态分析 base.apk + 真机运行验证：
+
+| 角色 | 8.0.78 | 8.0.79 |
+| --- | --- | --- |
+| 会话适配器（仍是 BaseAdapter + ListView 链） | `jo5/y0` | **`iq5/a1`** |
+| 数据容器字段 | `adapter.q`（jo5/f） | **`adapter.r`**（iq5/f，布局不变：`a`=行数、`b`=SparseArray、`c`=HashMap、`d`=List<行>） |
+| 行元素 | `jo5/z`（`z.d` = k4） | **`iq5/a0`**（仍是 `a0.d` = k4） |
+| talker 方法 | `k4.i1()`（父类 im/j2） | **`k4.f1()`**（父类改 hn/j2；代码里 `f1`/`i1` 都会尝试） |
+| 长按菜单宿主（OnCreateContextMenuListener） | `com.tencent.mm.ui.conversation.s3` | **`com.tencent.mm.ui.conversation.x3`**（结构同 s3：`g`=talker、`h`=k4、`n`=gl5/u4 回调） |
+| 菜单容器（ContextMenu 实现 / MMPopupMenu） | `kj5/i4` | **`gl5/h4`** |
+| 菜单项（MenuItem 实现，含 `c()Z`） | `kj5/j4` | **`gl5/i4`** |
+| 菜单点击回调 | `q3.onMMMenuItemSelected` | 实现类换成 `gl5/u4` 接口的实现（运行时从 x3 字段自动翻，无需硬编码） |
+
+- `getItem(I)` 的实现变了：8.0.79 是 `r.b.get(pos)`→key 再 `r.c.get(key)`→k4（8.0.78 是直接索引列表）；本模块只改写 `args[0]` 后透传，不受影响。
+- `getView` 仍直接索引 `r.d.get(pos)` —— 虚位重映射方案不变。
+- 8.0.79 本机运行时类加载器是 `PathClassLoader(base.apk)`，Tinker patch 与 base 同 hash，不构成「影子类」问题。
+- 代码侧已做版本自适应：数据容器字段 `r`/`q` 双候选、talker 方法 `f1`/`i1` 双候选，未来小版本重排只需改 `wechat_signatures.json`（revision+1）。
+
+### 微信 8.0.78 实测签名（历史参考）
 
 以下均为在 8.0.78 真机上运行时实测确认：
 

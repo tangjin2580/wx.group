@@ -128,12 +128,29 @@ internal fun ConversationGroupHook.legacyHeaderType(param: MethodHookParam): Any
     return invokeOriginal(param)
 }
 
-/** 会话列表的原始行列表 q.d */
+/** 会话列表的原始行列表 q.d（8.0.79: adapter.r.d；8.0.78: adapter.q.d） */
 internal fun ConversationGroupHook.legacyRows(adapter: Any): List<*>? = try {
-    val q = XposedHelpers.getObjectField(adapter, "q")
+    val q = XposedHelpers.getObjectField(adapter, "r")
+        ?: XposedHelpers.getObjectField(adapter, "q")
     XposedHelpers.getObjectField(q, "d") as? List<*>
 } catch (t: Throwable) {
     null
+}
+
+/**
+ * 从会话对象 k4 上取 talker。
+ * 8.0.78 是 k4.i1()（父类 im/j2），8.0.79 父类改成 hn/j2 后变成 f1() —— 两个名字都试。
+ */
+internal fun ConversationGroupHook.talkerOf(k4: Any?): String? {
+    if (k4 == null) return null
+    for (name in listOf("f1", "i1")) {
+        try {
+            val v = XposedHelpers.callMethod(k4, name) as? String
+            if (!v.isNullOrBlank()) return v
+        } catch (_: Throwable) {
+        }
+    }
+    return null
 }
 
 internal fun ConversationGroupHook.onLegacyGetCount(param: MethodHookParam) {
@@ -333,7 +350,7 @@ internal fun ConversationGroupHook.legacyUsernameAt(adapter: Any, i: Int): Strin
     return try {
         val row = legacyRows(adapter)?.getOrNull(i) ?: return null
         val k4 = XposedHelpers.getObjectField(row, "d")
-        XposedHelpers.callMethod(k4, "i1") as? String
+        talkerOf(k4)
     } catch (t: Throwable) {
         null
     }
@@ -391,7 +408,7 @@ internal fun ConversationGroupHook.groupUnread(adapter: Any, group: WxGroup): In
     val k4s = ArrayList<Any?>()
     for (row in rows) {
         val k4 = XposedHelpers.getObjectField(row, "d")
-        names.add(if (k4 == null) null else XposedHelpers.callMethod(k4, "i1") as? String)
+        names.add(talkerOf(k4))
         k4s.add(k4)
     }
     var sum = 0

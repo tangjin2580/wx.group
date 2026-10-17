@@ -160,7 +160,7 @@ import java.lang.reflect.Field
         return try {
             val row = rvData(a)?.getOrNull(i) ?: return null
             val k4 = talkerFieldOf(row)?.get(row) ?: return null
-            XposedHelpers.callMethod(k4, "i1") as? String
+            talkerOf(k4)
         } catch (t: Throwable) {
             null
         }

@@ -26,8 +26,8 @@ internal const val ACTION_ADD = "add_to_group"
 internal const val ACTION_NEW = "new_group"
 internal const val ACTION_REMOVE = "remove_from_group"
 
-/** 微信菜单项（MenuItem 实现）的默认类名，8.0.78 实测 */
-internal const val MENU_ITEM_CLASS_DEFAULT = "kj5.j4"
+/** 微信菜单项（MenuItem 实现）的默认类名，8.0.79 实测（8.0.78 是 kj5.j4） */
+internal const val MENU_ITEM_CLASS_DEFAULT = "gl5.i4"
 
 /** 微信自己菜单项点击的日志计数（临时探测用） */
 private var wxMenuClickLogged = 0
