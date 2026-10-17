@@ -347,16 +347,10 @@ object GroupStore {
         val groups = getGroupsXposed(null)
         if (groups.isEmpty()) return 0
         var changed = 0
-        val arr = JSONArray()
-        for (g in groups) {
-            arr.put(
-                JSONObject()
-                    .put("id", g.id)
-                    .put("name", g.name)
-                    .put("members", JSONArray(g.members.toList()))
-            )
-        }
-        val text = arr.toString()
+        // ⚠️ 必须写完整字段（order/icon/pinned/muted）。早期版本只写 id/name/members，
+        // 微信侧每次对齐都会把用户排好的顺序/图标剥掉 —— 一旦私有文件比镜像新，
+        // 排序就神不知鬼不觉地回到默认（实测踩过）。
+        val text = JSONArray().also { a -> groups.forEach { a.put(it.toJson()) } }.toString()
         val f = firstExisting(CHATGROUP_FILES)
         if (f != null && runCatching { f.readText() }.getOrNull() != text) {
             if (atomicWriteText(f, text)) changed++
@@ -528,26 +522,30 @@ object GroupStore {
     }
 
     /**
-     * 原子写：先写同目录临时文件再 rename。
-     * 直接 writeText 时若进程被杀，留下的是半截 JSON —— 分组会整个丢掉（真机上踩过）。
+     * 原子写：先写同目录临时文件再 rename；失败退回直接覆盖写。
+     *
+     * ⚠️ 直接 writeText 时若进程被杀，会留下半截 JSON（真机踩过，分组整个丢）。
+     * 但 tmp+rename 需要**目录**写权限 —— /data/local/tmp 是 drwxrwx--x shell shell，
+     * 普通应用 uid（模块 App 和微信都是）建不了 .tmp（EACCES）。
+     * 而镜像文件本身是 666，**覆盖写已有文件**完全可行 —— 所以 rename 失败时
+     * 必须退回直写，否则模块 App 改分组/改设置根本到不了微信（实测踩过：排序保存后
+     * 微信纹丝不动，日志里 "EACCES: .tmp open failed"）。
      */
     private fun atomicWriteText(f: java.io.File, text: String): Boolean {
-        return try {
-            val parent = f.parentFile
-            if (parent == null || !parent.exists()) {
-                f.writeText(text)   // 极端情况：没有父目录信息，退回直接写
-                return true
-            }
+        val parent = f.parentFile
+        if (parent != null && parent.exists()) {
             val tmp = java.io.File(parent, f.name + ".tmp")
-            tmp.writeText(text)
-            if (tmp.renameTo(f)) {
-                true
-            } else {
-                // rename 失败（跨挂载点等）：退回直接写，并清掉临时文件
-                f.writeText(text)
-                tmp.delete()
-                true
+            try {
+                tmp.writeText(text)
+                if (tmp.renameTo(f)) return true
+            } catch (_: Throwable) {
+                // 目录不可写：走下面的直写兜底
             }
+            try { tmp.delete() } catch (_: Throwable) {}
+        }
+        return try {
+            f.writeText(text)
+            true
         } catch (t: Throwable) {
             Log.e(TAG, "写文件失败 ${f.path}: ${t.message}")
             false
