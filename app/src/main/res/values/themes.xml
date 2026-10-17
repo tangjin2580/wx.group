@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 模块自身 App（设置/分组管理/签名编辑）用的 AppCompat 主题。
-         仅作用于模块 App 的 Activity；不影响注入到微信的 Hook 代码。 -->
-    <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
+    <!-- 模块自身 App（设置/分组管理/签名编辑/排序）用的 AppCompat 主题。
+         仅作用于模块 App 的 Activity；不影响注入到微信的 Hook 代码。
+
+         ⚠️ 必须用 DayNight：系统夜间模式是 auto（19:00–07:00 自动进深色）时，
+         固定 Light 主题的窗口背景仍是白色，但代码里 isDark()（读 uiMode）判成深色，
+         把文字画成白色 → 白底白字，排序页看起来就是「白屏」（实测踩过）。
+         DayNight 让窗口背景跟 uiMode 一起变深，文字与背景永远一致。 -->
+    <style name="AppTheme" parent="Theme.AppCompat.DayNight.DarkActionBar">
         <item name="colorPrimary">@android:color/holo_green_dark</item>
         <item name="colorPrimaryDark">@android:color/holo_green_dark</item>
         <item name="colorAccent">@android:color/holo_green_light</item>
