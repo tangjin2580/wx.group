@@ -29,10 +29,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/android-sdk
-          key: android-sdk-api37-${{ runner.os }}-v1
+          key: android-sdk-api35-${{ runner.os }}-v1
 
-      - name: Install Android SDK (api37 + build-tools 36.0.0)
-        # runner 自带的 cmdline-tools/16.0 解析不了 android-37，改用最新 commandline-tools。
+      - name: Install Android SDK (api35 + build-tools 35.0.0)
+        # runner 自带的 cmdline-tools 版本偏旧，改用最新 commandline-tools 安装 api35 平台。
         # SDK 根固定在 ~/android-sdk 并整体缓存，首次下载后后续 run 直接复用。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -63,7 +63,7 @@ jobs:
           else
             "$SDKMANAGER" --version 2>&1 | head -2 | tee -a "$LOG" || true
             yes | "$SDKMANAGER" --licenses >>"$LOG" 2>&1 || true
-            yes | "$SDKMANAGER" "platforms;android-37.2" "build-tools;36.0.0" "platform-tools" >>"$LOG" 2>&1
+            yes | "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "platform-tools" >>"$LOG" 2>&1
             RC=$?
           fi
 
@@ -86,7 +86,7 @@ jobs:
             echo "::error::SDK install failed rc=$RC; see commit comment on $GITHUB_SHA"
             exit 1
           fi
-          echo "::notice::Android SDK (api37 + build-tools 36.0.0) ready at $ANDROID_HOME"
+          echo "::notice::Android SDK (api35 + build-tools 35.0.0) ready at $ANDROID_HOME"
           exit 0
 
       - name: Decode signing key (mrli-key.jks)
