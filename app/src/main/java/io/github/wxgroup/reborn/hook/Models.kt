@@ -7,7 +7,11 @@ import io.github.wxgroup.reborn.core.WxGroup
 internal const val TYPE_HEADER = 0
 internal const val TYPE_REAL = 1
 
-/** 收纳组行专用的 view type（真实会话行的 view type 恒为 0） */
+/**
+ * 收纳组行专用的 view type 默认值。
+ * 实际值在运行时取「微信自己的 getViewTypeCount」当新 type（见 ListViewPath 的 getViewTypeCount
+ * hook），只有拿不到原值时才用这个常量兜底 —— 写死常量在微信将来新增 type 时会撞车。
+ */
 internal const val LEGACY_HEADER_VIEW_TYPE = 1
 
 /** RecyclerView 路径的分组行 view type（负数，避免与内容区类型撞车） */
@@ -18,6 +22,15 @@ internal const val RV_DEFAULT_CLASS = "com.tencent.mm.view.recyclerview.WxRecycl
 
 /** 会话行模型里「会话对象」的类型名（8.0.78 为 com.tencent.mm.storage.k4） */
 internal const val K4_TYPE = "com.tencent.mm.storage.k4"
+
+/**
+ * 诊断日志总开关。
+ *
+ * 打开后会额外挂一些「只为排查」的 Hook（把微信点击消费方全挂上、打印菜单点击的完整调用栈等），
+ * 有明显开销，也会刷爆 Xposed 日志 —— release 里默认关闭。
+ * 排查「点了没反应 / 闪退」时把它改 true 重新打包即可。
+ */
+internal const val DIAG_LOG = false
 
 /** 虚拟行。memberCount 仅分组行有意义（该分组有多少成员确实在会话列表里） */
 internal data class VEntry(
@@ -30,10 +43,23 @@ internal data class VEntry(
 /** ListView 分支的虚拟模型 */
 internal class LegacyModel(val entries: List<VEntry>, val hiddenCount: Int)
 
+/**
+ * 虚拟模型缓存键。
+ *
+ * 早期用「真实行数 + 全部分组成员的拼接字符串」当 key，而 getCount 每帧都会被调用 ——
+ * 滚动时等于每帧拼一个大字符串再比较，GC 压力明显。改成一个三元组：
+ * 行数变了、打开了别的分组、或分组数据本身变过（rev）才重建。
+ */
+internal data class ModelKey(
+    val realCount: Int,
+    val openGroupId: String?,
+    val groupsRev: Int
+)
+
 /** RecyclerView 分支的虚拟模型 */
 internal class RvModel(
     val realCount: Int,
-    val key: String,
+    val key: ModelKey,
     val entries: List<VEntry>,
     val perGroupInList: Map<String, Int>
 )

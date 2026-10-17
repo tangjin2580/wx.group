@@ -24,23 +24,27 @@ import io.github.wxgroup.reborn.core.WxGroup
 // ==================================================================================
 // 分组行 View
 // ==================================================================================
-internal fun ConversationGroupHook.createFolderRow(ctx: Context): View {
+internal fun ConversationGroupHook.createFolderRow(ctx: Context, clickable: Boolean = false): View {
     val dark = isDark(ctx)
     val row = LinearLayout(ctx).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(ctx, 16), dp(ctx, 10), dp(ctx, 16), dp(ctx, 10))
         setBackgroundColor(if (dark) Color.parseColor("#2c2c2e") else Color.WHITE)
-        // 关键：**不要**让收纳组行自己 clickable。
+        // 关键：ListView 分支下**不要**让收纳组行自己 clickable。
         // 行一旦 clickable 就会成为触摸目标，把 DOWN 吃掉：
         //   · ListView 收不到 DOWN → 从这一行上起手拖动无法滚动列表
         //   · 谁来处理这次点击变得不确定（行监听器 vs 微信自己的列表项监听器）
         //     → 微信偶尔按虚拟位置当真实会话处理，表现就是「点一下就闪退」
         // 正解：行保持「不可点」，交给 ListView 原生处理（有按压反馈、能拖动滚动），
         // 点击/长按统一由 AdapterView.performItemClick / performLongPress 那两处拦截。
+        //
+        // RecyclerView 分支相反：RV 不会因为这行 clickable 就丢掉滚动，而 RV 的点击
+        // 又不走 AdapterView 那套拦截 —— 所以那条路径传 clickable=true，由 RecyclerViewPath
+        // 自己挂 OnClickListener / OnLongClickListener。
         isEnabled = true
-        isClickable = false
-        isLongClickable = false
+        isClickable = clickable
+        isLongClickable = clickable
         descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
     }
     // 分组图标：容器 44dp，emoji 用 28sp + includeFontPadding=false，

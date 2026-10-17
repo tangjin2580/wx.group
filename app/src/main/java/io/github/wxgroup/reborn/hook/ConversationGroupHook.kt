@@ -84,6 +84,9 @@ class ConversationGroupHook {
     }
     internal val groupCache = mutableMapOf<String, List<WxGroup>>()
     internal val cacheTs = mutableMapOf<String, Long>()
+
+    /** 缓存对应的「文件变更戳」：stamp 没变就直接复用缓存，不再读文件 */
+    internal val cacheStamp = mutableMapOf<String, Long>()
     internal var lastStamp = Long.MIN_VALUE
     internal var lastStampCheckMs = 0L
     internal val CACHE_TTL = 1500L
@@ -96,7 +99,20 @@ class ConversationGroupHook {
     internal val pollRunnable = object : Runnable {
         override fun run() {
             try {
-                adapterRef?.get()?.let { detectAndRefresh(it) }
+                val lv = legacyListView?.get() as? android.view.View
+                // ListView 分支看列表自己；RecyclerView 分支没有 ListView，退一步看宿主窗口有没有焦点
+                val visible = if (lv != null) lv.isShown else (mainActivity?.get()?.hasWindowFocus() ?: true)
+                if (visible) {
+                    pollIdle = 0
+                    adapterRef?.get()?.let { detectAndRefresh(it) }
+                } else {
+                    // 列表不在屏幕上（微信在后台 / 盖着聊天页）：没必要每 1.2s 醒来 stat 一遍文件。
+                    // 连续 3 次不可见就停掉轮询，等 getCount 再次被调用时（用户回到会话列表）重新拉起。
+                    if (++pollIdle >= 3) {
+                        pollScheduled = false
+                        return
+                    }
+                }
             } catch (_: Throwable) {
             }
             mainHandler.postDelayed(this, 1200L)
@@ -107,8 +123,42 @@ class ConversationGroupHook {
     internal var legacyAdapterClass: Class<*>? = null
     internal var legacyListView: WeakReference<Any>? = null
     internal var legacyModel: LegacyModel? = null
-    internal var legacyModelKey: String? = null
+    internal var legacyModelKey: ModelKey? = null
     internal var legacyLoggedKey: Triple<Int, Int, Int>? = null
+
+    /**
+     * 分组数据的「内容版本号」。每次真正从磁盘重读分组（或微信侧保存）就 +1，
+     * 让虚拟模型知道要不要重建 —— 比把全部分组成员的字符串拿来当 key 便宜得多。
+     */
+    internal var groupsRev = 0
+
+    /** 收纳组行实际使用的 view type（运行时取微信自己的 count，见 getViewTypeCount hook） */
+    internal var legacyHeaderViewType = LEGACY_HEADER_VIEW_TYPE
+
+    /**
+     * talker 取值方法的解析结果：k4 类 → 命中的方法名（8.0.78 `i1`，8.0.79 `f1`）。
+     * 不缓存的话每个会话最多要试 2 个方法名，而 `callMethod` 未命中也要扫一遍候选。
+     */
+    internal val talkerMethodCache = java.util.concurrent.ConcurrentHashMap<Class<*>, String>()
+
+    /** 适配器的「行容器」字段（8.0.79 `r`，8.0.78 `q`）：解析一次，之后直接 Field.get */
+    internal var containerField: Field? = null
+    internal var containerFieldOwner: Class<*>? = null
+
+    /**
+     * 未读快照：username → 未读数。
+     *
+     * 组行每渲染一次都要「组内成员未读之和」，早期实现是每渲染一个组行就把整个会话列表
+     * 扫一遍、逐个反射取未读 —— 7 个组行 × 82 行 ≈ 上千次反射。改成整表扫一次 + 短 TTL 复用，
+     * 既保证新消息后角标能自己更新（400ms 内），又不会把渲染路径拖慢。
+     */
+    internal var unreadSnapshot: Map<String, Int> = emptyMap()
+    internal var unreadSnapshotAt = 0L
+    internal var unreadSnapshotRows = -1
+    internal var unreadDiffLogged = 0
+
+    /** 列表不可见时的连续空转次数（用于退避停轮询，省电） */
+    internal var pollIdle = 0
     internal var legacyCountLogged = 0
     internal var legacyRenderLogged = 0
     internal var legacyGuardLogged = 0
@@ -204,12 +254,52 @@ class ConversationGroupHook {
         try {
             val gs = GroupStore.getGroupsXposed(context)
             log("分组读取: ${gs.size} 个 (${gs.joinToString { "${it.name}(${it.members.size})" }}), stamp=${GroupStore.groupsStamp()}")
+            // 启动时把「微信私有目录 ↔ /data/local/tmp 镜像」对齐一次（读路径不再写文件）
+            GroupStore.reconcileXposed()
         } catch (t: Throwable) {
             log("分组读取异常: ${t.message}")
         }
 
         installCrashLogger()
         installBootstrap()
+        installProviderObserver(context)
+    }
+
+    /**
+     * 事件驱动的刷新通道：模块 App 每次写分组都会对 Provider URI 调 notifyChange，
+     * 这里注册观察者，收到就清缓存 + 重建模型 —— 比 1.2s 轮询快，也省电。
+     * 注册失败（极端 ROM / 权限）没关系，轮询仍然兜底。
+     */
+    private fun installProviderObserver(context: Context) {
+        try {
+            val uri = android.net.Uri.parse(io.github.wxgroup.reborn.core.GroupStore.PROVIDER_URI)
+            context.contentResolver.registerContentObserver(
+                uri, true,
+                object : android.database.ContentObserver(mainHandler) {
+                    override fun onChange(selfChange: Boolean) {
+                        try {
+                            synchronized(groupCache) {
+                                groupCache.clear()
+                                cacheTs.clear()
+                            }
+                            groupsRev++
+                            val a = adapterRef?.get()
+                            if (a != null) {
+                                invalidateLegacyModel(a)
+                                XposedHelpers.callMethod(a, "notifyDataSetChanged")
+                            }
+                            lastStamp = io.github.wxgroup.reborn.core.GroupStore.groupsStamp()
+                            log("分组已变更(Provider 通知)，已刷新会话列表")
+                        } catch (t: Throwable) {
+                            log("处理分组变更通知失败: ${t.message}")
+                        }
+                    }
+                }
+            )
+            log("已注册分组变更观察者（Provider 通知通道）")
+        } catch (t: Throwable) {
+            log("注册分组变更观察者失败（不影响轮询兜底）: ${t.message}")
+        }
     }
 
     /**

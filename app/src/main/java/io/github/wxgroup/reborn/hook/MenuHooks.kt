@@ -170,8 +170,8 @@ internal fun ConversationGroupHook.hookMenuCallbackClass(cls: Class<*>): Boolean
                 val item = param.args.getOrNull(0) ?: return
                 val action = menuActions[item]
                 if (action == null) {
-                    // 不是我们注入的菜单项：记下标题与调用栈，用来定位「折叠该聊天」到底干了什么
-                    if (wxMenuClickLogged < 25) {
+                    // 不是我们注入的菜单项：只有排查时才记标题与调用栈（每条 14 行日志，太吵）
+                    if (DIAG_LOG && wxMenuClickLogged < 25) {
                         wxMenuClickLogged++
                         val mi = item as? android.view.MenuItem
                         log("微信菜单点击: title=${mi?.title} id=${mi?.itemId} cls=${item.javaClass.name}")

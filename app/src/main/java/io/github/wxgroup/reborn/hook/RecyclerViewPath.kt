@@ -207,7 +207,7 @@ import java.lang.reflect.Field
 
         checkAutoRefresh(a)
         val groups = sortedGroups()
-        val key = (openGroupId ?: "-") + "|" + groups.joinToString(";") { "${it.id}:${it.members.joinToString(",")}" }
+        val key = ModelKey(realCount, openGroupId, groupsRev)
         val cached = rvModels[a]
         if (cached == null || cached.realCount != realCount || cached.key != key) {
             val model = buildRvModel(a, realCount, groups, key)
@@ -225,19 +225,23 @@ import java.lang.reflect.Field
         param.result = h + model.entries.size + m
     }
 
-    internal fun ConversationGroupHook.buildRvModel(a: Any, realCount: Int, groups: List<WxGroup>, key: String): RvModel {
-        val userNames = Array(realCount) { i -> rvUsernameAt(a, i) }
+    internal fun ConversationGroupHook.buildRvModel(a: Any, realCount: Int, groups: List<WxGroup>, key: ModelKey): RvModel {
+        // 一次遍历建 username→下标，避免每个成员都做一次线性 indexOf
+        val posOf = HashMap<String, Int>(realCount * 2)
+        for (i in 0 until realCount) {
+            val u = rvUsernameAt(a, i) ?: continue
+            if (!posOf.containsKey(u)) posOf[u] = i
+        }
         val owner = HashMap<String, String>()
         for (g in groups) for (mm in g.members) owner.putIfAbsent(mm, g.id)
 
         val entries = ArrayList<VEntry>()
         val perGroup = LinkedHashMap<String, Int>()
         for (g in groups) {
-            val memberPos = ArrayList<Int>()
+            val memberPos = ArrayList<Int>(g.members.size)
             for (mm in g.members) {
                 if (owner[mm] != g.id) continue
-                val rp = userNames.indexOf(mm)
-                if (rp >= 0) memberPos.add(rp)
+                posOf[mm]?.let { memberPos.add(it) }
             }
             entries.add(VEntry(TYPE_HEADER, g, -1, memberPos.size))
             // 注：本机型走 ListView 分支，这里保持「内联展开」语义（用 openGroupId 驱动）
@@ -247,7 +251,7 @@ import java.lang.reflect.Field
             perGroup[g.id] = memberPos.size
         }
         for (i in 0 until realCount) {
-            val u = userNames[i]
+            val u = rvUsernameAt(a, i)
             if (u != null && owner.containsKey(u)) continue
             entries.add(VEntry(TYPE_REAL, null, i))
         }
@@ -310,7 +314,17 @@ import java.lang.reflect.Field
         if ((param.args[1] as? Int) != RV_FOLDER_VIEW_TYPE) return
         val parent = param.args[0] as? ViewGroup ?: return
         val ctx = parent.context ?: appContext ?: return
-        val view = createFolderRow(ctx)
+        // RecyclerView 分支的行由我们自己接点击：RV 里子 View clickable 不影响滚动，
+        // 和 ListView 的坑（吃掉 DOWN）不同。早期只做了映射没接点击，RV 机型上组行点了没反应。
+        val view = createFolderRow(ctx, clickable = true)
+        view.setOnClickListener { v ->
+            (v.tag as? FolderHolder)?.groupId?.let { handleHeaderTap(it) }
+        }
+        view.setOnLongClickListener { v ->
+            val gid = (v.tag as? FolderHolder)?.groupId ?: return@setOnLongClickListener false
+            val g = sortedGroups().firstOrNull { it.id == gid } ?: return@setOnLongClickListener false
+            handleHeaderLongPress(v, g)
+        }
         view.layoutParams = makeRvLayoutParams(parent)
         param.result = wrapHolder(a, view)
     }
@@ -327,7 +341,7 @@ import java.lang.reflect.Field
                 } catch (t: Throwable) {
                     null
                 }
-                if (itemView != null) bindFolderRow(itemView, g, e.memberCount)
+                if (itemView != null) bindFolderRow(itemView, g, e.memberCount, rvGroupUnread(a, g))
             }
             param.result = null
             return
@@ -337,6 +351,20 @@ import java.lang.reflect.Field
             param.args[1] = mapped
             param.result = invokeOriginal(param)
         }
+    }
+
+    /** RV 分支的组未读：直接扫适配器数据（RV 分支不常驻，不做快照） */
+    internal fun ConversationGroupHook.rvGroupUnread(a: Any, group: WxGroup): Int {
+        if (group.members.isEmpty()) return 0
+        val data = rvData(a) ?: return 0
+        var sum = 0
+        for (row in data) {
+            val r = row ?: continue
+            val k4 = talkerFieldOf(r)?.get(r) ?: continue
+            val u = talkerOf(k4) ?: continue
+            if (u in group.members) sum += unreadOf(k4)
+        }
+        return sum
     }
 
     internal fun ConversationGroupHook.wrapHolder(a: Any, view: View): Any? = try {

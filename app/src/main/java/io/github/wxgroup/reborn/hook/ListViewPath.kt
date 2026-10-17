@@ -1,6 +1,7 @@
 package io.github.wxgroup.reborn.hook
 
 import android.content.Context
+import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import io.github.wxgroup.reborn.core.WeChatSignatures
@@ -10,17 +11,23 @@ import io.github.wxgroup.reborn.xp.XC_MethodHook
 import io.github.wxgroup.reborn.xp.XC_MethodHook.MethodHookParam
 import io.github.wxgroup.reborn.xp.XposedBridge
 import io.github.wxgroup.reborn.xp.XposedHelpers
+import java.lang.reflect.Field
 
 /**
- * ListView 分支（8.0.78 本机实际生效）。
+ * ListView 分支（8.0.78/8.0.79 本机实际生效）。
  *
- * 适配器 jo5/y0 的 getView 直接按 position 索引自己的行列表 `q.d`，
- * 所以「虚位重映射」只要改写 args[0] 就能让微信渲染正确的会话。
- * 这里负责：适配器 hook、虚拟模型构建、未读数统计。
+ * 适配器的 getView 直接按 position 索引自己的行列表，所以「虚位重映射」只要改写 args[0]
+ * 就能让微信渲染正确的会话。这里负责：适配器 hook、虚拟模型构建、未读数统计。
+ *
+ * ── 性能约定（都是踩过帧率坑之后的写法，别改回去）──
+ *   · 反射一律走 XposedHelpers 的缓存（Field/Method 解析只做一次）
+ *   · talker 方法名、行容器字段名按类记住，不做「先试 f1 再试 i1」的二次扫描
+ *   · getCount/getView 里不做字符串拼接比较、不做全表扫描（未读走 400ms 快照）
+ *   · 分组未读 = 快照里查表求和，绝不每渲染一个组行就重扫整个会话列表
  */
 
 // ==================================================================================
-// ListView 分支（jo5/y0 BaseAdapter）—— 8.0.78 本机实际生效
+// 安装
 // ==================================================================================
 internal fun ConversationGroupHook.installListViewPath(loader: ClassLoader, sig: WeChatSignatures) {
     val className = sig.resolveClassName("ConversationAdapter")
@@ -32,7 +39,7 @@ internal fun ConversationGroupHook.installListViewPath(loader: ClassLoader, sig:
     legacyAdapterClass = clazz
     log("ListView 分支: 适配器 = ${clazz.name} (loader=${clazz.classLoader?.javaClass?.simpleName})")
 
-    // jo5/y0 自己声明的位置方法（按「方法名 + 参数个数 + 非 bridge」定位）
+    // 适配器自己声明的位置方法（按「方法名 + 参数个数 + 非 bridge」定位）
     hookAdapterMethod(clazz, "getCount", 0, "ListViewGetCount")
     hookAdapterMethod(clazz, "getView", 3, "ListViewGetView")
     hookAdapterMethod(clazz, "getItem", 1, "ListViewGetItem")
@@ -42,7 +49,11 @@ internal fun ConversationGroupHook.installListViewPath(loader: ClassLoader, sig:
     val intArg = Int::class.javaPrimitiveType!!
     hookBaseAdapter(base, "getItemViewType", arrayOf(intArg)) { p -> legacyHeaderType(p) }
     hookBaseAdapter(base, "getViewTypeCount", emptyArray()) { p ->
-        ((invokeOriginal(p) as? Int) ?: 1) + 1
+        // 收纳组行占用「微信原有 type 数量」这个新值：contentCount 从 1 变 2 时，
+        // 原来的实现写死 LEGACY_HEADER_VIEW_TYPE=1，微信将来自己新增 type 就会撞车。
+        val orig = (invokeOriginal(p) as? Int)?.takeIf { it > 0 } ?: 1
+        legacyHeaderViewType = orig
+        orig + 1
     }
     // 注意：**不要**让 isEnabled(收纳组行) 返回 false。
     // 那会让 AbsListView.onInterceptTouchEvent 不进 TOUCH_MODE_DOWN，触摸被行 View 吃掉：
@@ -123,55 +134,201 @@ internal fun ConversationGroupHook.legacyHeaderType(param: MethodHookParam): Any
     val pos = param.args[0] as? Int ?: return null
     if (pos !in m.entries.indices) return null
     val e = m.entries[pos]
-    if (e.type == TYPE_HEADER) return LEGACY_HEADER_VIEW_TYPE
+    if (e.type == TYPE_HEADER) return legacyHeaderViewType
     param.args[0] = e.realPos
     return invokeOriginal(param)
 }
 
-/** 会话列表的原始行列表 q.d（8.0.79: adapter.r.d；8.0.78: adapter.q.d） */
-internal fun ConversationGroupHook.legacyRows(adapter: Any): List<*>? = try {
-    val q = XposedHelpers.getObjectField(adapter, "r")
-        ?: XposedHelpers.getObjectField(adapter, "q")
-    XposedHelpers.getObjectField(q, "d") as? List<*>
-} catch (t: Throwable) {
-    null
+// ==================================================================================
+// 微信数据访问（全部带缓存）
+// ==================================================================================
+
+/**
+ * 适配器的「行容器」字段：8.0.79 是 `r`，8.0.78 是 `q`。
+ * 解析一次后按适配器类记住，之后每次都是 Field.get —— 不再「先试 r、失败再试 q」。
+ */
+internal fun ConversationGroupHook.containerOf(adapter: Any): Any? {
+    val cls = adapter.javaClass
+    val f: Field? = if (containerFieldOwner === cls) {
+        containerField
+    } else {
+        val found = XposedHelpers.fieldOf(cls, "r") ?: XposedHelpers.fieldOf(cls, "q")
+        containerField = found
+        containerFieldOwner = cls
+        found
+    }
+    if (f == null) return null
+    return try {
+        f.get(adapter)
+    } catch (t: Throwable) {
+        null
+    }
 }
+
+/** 会话列表的原始行列表（8.0.79: adapter.r.d；8.0.78: adapter.q.d） */
+internal fun ConversationGroupHook.legacyRows(adapter: Any): List<*>? {
+    val container = containerOf(adapter) ?: return null
+    return XposedHelpers.getObjectField(container, "d") as? List<*>
+}
+
+/** talker 方法的候选名（8.0.79 `f1`，8.0.78 `i1`），命中后按类记住，只解析一次 */
+private val TALKER_METHOD_CANDIDATES = arrayOf("f1", "i1")
 
 /**
  * 从会话对象 k4 上取 talker。
- * 8.0.78 是 k4.i1()（父类 im/j2），8.0.79 父类改成 hn/j2 后变成 f1() —— 两个名字都试。
+ * 8.0.78 是 k4.i1()（父类 im/j2），8.0.79 父类改成 hn/j2 后变成 f1()。
  */
 internal fun ConversationGroupHook.talkerOf(k4: Any?): String? {
     if (k4 == null) return null
-    for (name in listOf("f1", "i1")) {
-        try {
-            val v = XposedHelpers.callMethod(k4, name) as? String
-            if (!v.isNullOrBlank()) return v
-        } catch (_: Throwable) {
+    val cls = k4.javaClass
+    val known = talkerMethodCache[cls]
+    if (known != null) return XposedHelpers.callMethod(k4, known) as? String
+    for (name in TALKER_METHOD_CANDIDATES) {
+        val v = XposedHelpers.callMethod(k4, name) as? String
+        if (!v.isNullOrBlank()) {
+            talkerMethodCache[cls] = name
+            return v
         }
     }
     return null
 }
 
+/**
+ * 未读字段候选名，按可信度排序。
+ *
+ * 8.0.79 实测（本次改造时打出来的对照日志）：
+ *     q2=0, field_unReadCount=9 / 68 / 10 / 1
+ * 也就是说 8.0.78 时代被当作「实时未读」的 `q2`，在 8.0.79 里已经**不是**未读数了
+ * （混淆名整体重排，同一个名字换了语义）。真正稳定的依据是 `field_` 前缀的字段 ——
+ * 那是微信数据库列名，不参与混淆，所以：
+ *   1. 优先用 `field_unReadCount`（跨版本最稳）
+ *   2. 没有 field_ 前缀的字段时才退回其它候选里第一个非零值
+ */
+private val UNREAD_FIELD_NAMES = listOf("field_unReadCount", "field_unreadCount", "q2", "unReadCount", "unreadCount")
+
+/** k4 类 → 该类的未读候选字段（沿继承链解析一次，之后直接用） */
+internal val unreadFieldsCache = java.util.concurrent.ConcurrentHashMap<Class<*>, List<Field>>()
+
+internal fun ConversationGroupHook.unreadFieldsOf(cls: Class<*>): List<Field> =
+    unreadFieldsCache.getOrPut(cls) {
+        val out = ArrayList<Field>(UNREAD_FIELD_NAMES.size)
+        for (n in UNREAD_FIELD_NAMES) {
+            val f = XposedHelpers.fieldOf(cls, n) ?: continue
+            if (out.none { it === f }) out.add(f)
+        }
+        out
+    }
+
+private fun readInt(f: Field, obj: Any): Int = try {
+    (f.get(obj) as? Number)?.toInt() ?: 0
+} catch (t: Throwable) {
+    0
+}
+
+/**
+ * 从会话对象 k4 上取未读数。
+ *
+ * ⚠️ 关键教训一：未读字段声明在**父类**上，`getDeclaredField` 只查当前类，
+ * 早期版本因此永远读到 0（角标不显示）—— 这里走 `fieldOf`（沿继承链 + 缓存）。
+ *
+ * ⚠️ 关键教训二：**不要**取「所有候选字段的最大值」，也要小心继承下来的混淆名。
+ * 8.0.79 的 `q2` 恒为 0（已不是未读数），而 `field_unReadCount` 才是真值；
+ * 老实现取 max 只是碰巧能用。这里改成「优先 field_ 前缀字段」，语义明确、跨版本更稳。
+ */
+internal fun ConversationGroupHook.unreadOf(k4: Any?): Int {
+    if (k4 == null) return 0
+    val fields = unreadFieldsOf(k4.javaClass)
+    if (fields.isEmpty()) return 0
+    // field_ 前缀 = 数据库列名，不参与混淆，是跨版本最可信的来源
+    for (f in fields) {
+        if (f.name.startsWith("field_")) {
+            val n = readInt(f, k4).coerceAtLeast(0)
+            logUnreadDiff(fields, f, n, k4)
+            return n
+        }
+    }
+    // 没有 field_ 字段（未来改名）：退回其它候选里第一个非零值
+    for (f in fields) {
+        val n = readInt(f, k4)
+        if (n > 0) return n
+    }
+    return 0
+}
+
+/** 首个字段与其它候选值不一致时打一条日志（最多 8 条），用于跨版本核对哪个字段才是真值 */
+private fun ConversationGroupHook.logUnreadDiff(fields: List<Field>, chosen: Field, value: Int, k4: Any) {
+    if (unreadDiffLogged >= 8) return
+    val other = fields.firstOrNull { it !== chosen } ?: return
+    val ov = readInt(other, k4)
+    if (ov == value) return
+    unreadDiffLogged++
+    log("未读字段差异: ${chosen.name}=$value, ${other.name}=$ov（以 ${chosen.name} 为准）")
+}
+
+/**
+ * 未读快照（username → 未读数）。
+ *
+ * 组行的「组内未读总数」需要遍历成员会话，早期实现是每渲染一个组行就把整个会话列表
+ * 扫一遍并逐个反射取未读（7 组 × 82 行 ≈ 上千次反射，滚动直接掉帧）。
+ * 现在整表只扫一次，结果在 [UNREAD_SNAPSHOT_TTL] 内复用；新消息到达时微信会重绘列表，
+ * 下一次绑定就会拿到新快照（最坏 400ms 后更新）。
+ */
+private const val UNREAD_SNAPSHOT_TTL = 400L
+
+internal fun ConversationGroupHook.unreadMapFor(adapter: Any): Map<String, Int> {
+    val now = SystemClock.uptimeMillis()
+    val rows = legacyRows(adapter) ?: return emptyMap()
+    val n = rows.size
+    if (unreadSnapshotAt != 0L && unreadSnapshotRows == n && now - unreadSnapshotAt < UNREAD_SNAPSHOT_TTL) {
+        return unreadSnapshot
+    }
+    val map = HashMap<String, Int>(n * 2)
+    for (row in rows) {
+        val k4 = XposedHelpers.getObjectField(row, "d") ?: continue
+        val u = talkerOf(k4) ?: continue
+        map[u] = unreadOf(k4)
+    }
+    unreadSnapshot = map
+    unreadSnapshotAt = now
+    unreadSnapshotRows = n
+    return map
+}
+
+/** 收纳组未读总数：把组内每个成员会话的未读加起来（查快照，O(成员数)） */
+internal fun ConversationGroupHook.groupUnread(adapter: Any, group: WxGroup): Int {
+    if (group.members.isEmpty()) return 0
+    val map = unreadMapFor(adapter)
+    if (map.isEmpty()) return 0
+    var sum = 0
+    for (m in group.members) sum += map[m] ?: 0
+    return sum
+}
+
+// ==================================================================================
+// 虚拟模型
+// ==================================================================================
+
 internal fun ConversationGroupHook.onLegacyGetCount(param: MethodHookParam) {
     val a = param.thisObject ?: return
-    val orig = invokeOriginal(param) as? Int
     // 用 q.d.size 作为权威行数：getView 就是按这个列表索引的，
     // q.a（原始 getCount 的返回值）在刷新过程中可能短暂过期甚至为 -1。
-    val realCount = (legacyRows(a)?.size ?: (orig ?: return)).coerceAtLeast(0)
+    // 拿不到行列表就直接放行给微信原逻辑（宁可这帧不折叠，也不乱给行数）。
+    val realCount = legacyRows(a)?.size ?: return
     if (legacyCountLogged < 5) {
         legacyCountLogged++
+        val orig = invokeOriginal(param) as? Int
         log("ListView.getCount: q.a=$orig, q.d.size=$realCount")
     }
     checkAutoRefresh(a)
 
     val groups = sortedGroups()
-    val key = modelKey(realCount, groups)
+    val key = ModelKey(realCount, openGroupId, groupsRev)
     var model = legacyModel
     if (model == null || legacyModelKey != key) {
         model = buildLegacyModel(a, realCount, groups)
         legacyModel = model
         legacyModelKey = key
+        unreadSnapshotAt = 0L   // 行数/分组变了，未读快照一起失效
     }
     val sigKey = Triple(model.entries.size, model.hiddenCount, groups.size)
     if (legacyLoggedKey != sigKey) {
@@ -181,24 +338,29 @@ internal fun ConversationGroupHook.onLegacyGetCount(param: MethodHookParam) {
     param.result = model.entries.size
 }
 
-/** 虚拟模型缓存键：真实行数 + 当前打开的分组 + 分组内容 */
-internal fun ConversationGroupHook.modelKey(realCount: Int, groups: List<WxGroup>): String =
-    "$realCount|${openGroupId ?: "-"}|" +
-        groups.joinToString(";") { "${it.id}:${it.members.joinToString(",")}" }
-
 internal fun ConversationGroupHook.buildLegacyModel(a: Any, realCount: Int, groups: List<WxGroup>): LegacyModel {
-    val userNames = Array(realCount) { i -> legacyUsernameAt(a, i) }
+    // 一次遍历同时建「下标 → username」和「username → 下标」，
+    // 后面按成员找下标就是 O(1)，不再对每个成员做一次 indexOf（82 × N 的线性查找）。
+    val rows = legacyRows(a)
+    val names = arrayOfNulls<String>(realCount)
+    val posOf = HashMap<String, Int>(realCount * 2)
+    for (i in 0 until realCount) {
+        val row = rows?.getOrNull(i) ?: continue
+        val k4 = XposedHelpers.getObjectField(row, "d") ?: continue
+        val u = talkerOf(k4) ?: continue
+        names[i] = u
+        if (!posOf.containsKey(u)) posOf[u] = i
+    }
     // username -> 归属分组（第一个命中的分组胜出，避免重复收纳）
     val owner = HashMap<String, String>()
     for (g in groups) for (mm in g.members) owner.putIfAbsent(mm, g.id)
 
     /** 某个分组的成员在真实列表里的下标（只取真正归属它的） */
     fun membersOf(g: WxGroup): List<Int> {
-        val out = ArrayList<Int>()
+        val out = ArrayList<Int>(g.members.size)
         for (mm in g.members) {
             if (owner[mm] != g.id) continue
-            val rp = userNames.indexOf(mm)
-            if (rp >= 0) out.add(rp)
+            posOf[mm]?.let { out.add(it) }
         }
         return out
     }
@@ -231,12 +393,16 @@ internal fun ConversationGroupHook.buildLegacyModel(a: Any, realCount: Int, grou
     }
     // 其余会话保持原顺序；属于任何分组的会话都已「收拢」（从原位隐藏）
     for (i in 0 until realCount) {
-        val u = userNames[i]
+        val u = names[i]
         if (u != null && owner.containsKey(u)) continue
         entries.add(VEntry(TYPE_REAL, null, i))
     }
     return LegacyModel(entries, hidden)
 }
+
+// ==================================================================================
+// getView / getItem
+// ==================================================================================
 
 internal fun ConversationGroupHook.onLegacyGetView(param: MethodHookParam) {
     val pos = (param.args[0] as? Int) ?: return
@@ -254,11 +420,8 @@ internal fun ConversationGroupHook.onLegacyGetView(param: MethodHookParam) {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             )
             val adapter = param.thisObject
-            if (adapter != null) {
-                bindFolderRow(view, e.group, e.memberCount, groupUnread(adapter, e.group))
-            } else {
-                bindFolderRow(view, e.group, e.memberCount, 0)
-            }
+            val unread = if (adapter != null) groupUnread(adapter, e.group) else 0
+            bindFolderRow(view, e.group, e.memberCount, unread)
             if (legacyRenderLogged < 10) {
                 legacyRenderLogged++
                 log("渲染收纳组行: ${e.group.name} @ pos=$pos")
@@ -338,8 +501,7 @@ internal fun ConversationGroupHook.onLegacyGetItem(param: MethodHookParam) {
             return
         }
         param.args[0] = rp
-        val r = invokeOriginal(param)
-        param.result = r
+        param.result = invokeOriginal(param)
     } catch (t: Throwable) {
         log("getItem 保护: ${t.javaClass.simpleName}: ${t.message}")
         param.result = null
@@ -354,67 +516,4 @@ internal fun ConversationGroupHook.legacyUsernameAt(adapter: Any, i: Int): Strin
     } catch (t: Throwable) {
         null
     }
-}
-
-/**
- * 从会话对象 k4 上取未读数。
- *
- * ⚠️ 关键教训：未读字段（field_unReadCount 等）声明在父类 j2 上，
- * `javaClass.getDeclaredField` 只查当前类、查不到继承来的字段 —— 早期版本就是
- * 因为这个原因永远读到 0，角标一直不显示。这里必须沿 superclass 链一路找上去。
- */
-internal fun ConversationGroupHook.unreadOf(k4: Any?): Int {
-    if (k4 == null) return 0
-    // 不确定哪个字段是运行时真值（field_unReadCount 在缓存对象上可能恒 0，
-    // q2 才是实时未读），干脆全部取一遍，取最大值，谁有值用谁
-    var best = 0
-    for (n in listOf("q2", "field_unReadCount", "field_unreadCount", "unReadCount", "unreadCount")) {
-        val f = findFieldInHierarchy(k4.javaClass, listOf(n)) ?: continue
-        val v = try {
-            f.get(k4)
-        } catch (_: Throwable) {
-            null
-        }
-        if (v is Number && v.toInt() > best) best = v.toInt()
-    }
-    return best
-}
-
-/** 沿类继承链查找字段（含父类），找不到返回 null */
-private fun findFieldInHierarchy(clazz: Class<*>?, names: List<String>): java.lang.reflect.Field? {
-    var c = clazz
-    var depth = 0
-    while (c != null && depth < 6) {
-        for (n in names) {
-            try {
-                val f = c.getDeclaredField(n)
-                f.isAccessible = true
-                return f
-            } catch (_: Throwable) {
-            }
-        }
-        c = c.superclass
-        depth++
-    }
-    return null
-}
-
-/** 收纳组未读总数：把组内每个成员会话的未读加起来 */
-internal fun ConversationGroupHook.groupUnread(adapter: Any, group: WxGroup): Int {
-    if (group.members.isEmpty()) return 0
-    val rows = legacyRows(adapter) ?: return 0
-    if (rows.isEmpty()) return 0
-    val names = ArrayList<String?>()
-    val k4s = ArrayList<Any?>()
-    for (row in rows) {
-        val k4 = XposedHelpers.getObjectField(row, "d")
-        names.add(talkerOf(k4))
-        k4s.add(k4)
-    }
-    var sum = 0
-    for (m in group.members) {
-        val i = names.indexOf(m)
-        if (i >= 0) sum += unreadOf(k4s[i])
-    }
-    return sum
 }

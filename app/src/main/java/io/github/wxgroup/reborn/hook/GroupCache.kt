@@ -10,6 +10,11 @@ import java.lang.ref.WeakReference
  *
  * 模块 App 改完分组后写镜像文件，微信侧靠 groupsStamp() 的变化发现它，
  * 然后主动 notifyDataSetChanged —— 不用杀微信也能立刻看到效果。
+ *
+ * ⚠️ 读路径的约定：`sortedGroups()` 会被 getCount/getView 高频调用，所以
+ *   1. 先比 stamp（3 次 stat，很便宜），**没变就直接用缓存**，不再读文件解析 JSON；
+ *   2. 只有 stamp 变了才重读 —— 不再用「固定 1.5s 到期就重读」的方式，
+ *      那会在滚动时周期性触发主线程文件 IO + JSON 解析。
  */
 
 /** 从微信进程直接落盘分组（写微信私有目录文件 + 镜像），并让会话列表立刻刷新 */
@@ -22,9 +27,12 @@ internal fun ConversationGroupHook.persistGroups(all: List<WxGroup>) {
     synchronized(groupCache) {
         groupCache.clear()
         cacheTs.clear()
+        cacheStamp.clear()
     }
     lastStamp = GroupStore.groupsStamp() // 是我们自己写的，别当成外部变更再来一轮
+    groupsRev++
     legacyModelKey = null
+    unreadSnapshotAt = 0L
     notifyList()
     log("分组已保存（微信侧）: ${all.joinToString { "${it.name}(${it.members.size})" }}")
 }
@@ -32,7 +40,8 @@ internal fun ConversationGroupHook.persistGroups(all: List<WxGroup>) {
 // 自动刷新 / 分组缓存
 // ==================================================================================
 internal fun ConversationGroupHook.checkAutoRefresh(adapter: Any) {
-    adapterRef = WeakReference(adapter)
+    // 每帧都会走到这里，别每次都 new 一个 WeakReference（滚动时的无谓分配）
+    if (adapterRef?.get() !== adapter) adapterRef = WeakReference(adapter)
     if (!pollScheduled) {
         pollScheduled = true
         mainHandler.postDelayed(pollRunnable, 1200L)
@@ -52,7 +61,13 @@ internal fun ConversationGroupHook.detectAndRefresh(adapter: Any) {
     }
     if (stamp == lastStamp) return
     lastStamp = stamp
-    synchronized(groupCache) { groupCache.clear(); cacheTs.clear() }
+    synchronized(groupCache) {
+        groupCache.clear()
+        cacheTs.clear()
+        cacheStamp.clear()
+    }
+    groupsRev++
+    unreadSnapshotAt = 0L
     if (pendingRefresh) return
     pendingRefresh = true
     mainHandler.post {
@@ -70,13 +85,19 @@ internal fun ConversationGroupHook.detectAndRefresh(adapter: Any) {
 
 internal fun ConversationGroupHook.sortedGroups(): List<WxGroup> {
     val now = System.currentTimeMillis()
+    // stamp 是「最后修改时间 + 长度」的组合，3 次 stat 就能判断数据有没有被改过
+    val stamp = GroupStore.groupsStamp()
     synchronized(groupCache) {
         val cached = groupCache["*"]
-        val ts = cacheTs["*"] ?: 0
-        if (cached != null && now - ts < CACHE_TTL) return cached
+        if (cached != null) {
+            if (stamp >= 0L && cacheStamp["*"] == stamp) return cached
+            // stamp 读不到（异常/无权限）时退回时间 TTL 兜底
+            if (stamp < 0L && now - (cacheTs["*"] ?: 0L) < CACHE_TTL) return cached
+        }
     }
     val groups = GroupStore.getGroupsXposed(null)
     val ordered = GroupStore.sortForDisplay(groups)
+    groupsRev++
     if (orderLogged < 3) {
         orderLogged++
         log(
@@ -88,9 +109,11 @@ internal fun ConversationGroupHook.sortedGroups(): List<WxGroup> {
     synchronized(groupCache) {
         groupCache["*"] = ordered
         cacheTs["*"] = now
+        cacheStamp["*"] = stamp
         if (groupCache.size > 8) {
             groupCache.clear()
             cacheTs.clear()
+            cacheStamp.clear()
         }
     }
     // 排序规则：置顶优先 → 用户自定义顺序 → 创建时间 → 名字。
@@ -109,12 +132,13 @@ internal fun ConversationGroupHook.sortedGroups(): List<WxGroup> {
  */
 internal fun ConversationGroupHook.invalidateLegacyModel(a: Any?) {
     legacyModelKey = null
+    unreadSnapshotAt = 0L
     if (a == null) return
     val rows = legacyRows(a)?.size ?: return
     if (rows <= 0) return
     val groups = sortedGroups()
     legacyModel = buildLegacyModel(a, rows, groups)
-    legacyModelKey = modelKey(rows, groups)
+    legacyModelKey = ModelKey(rows, openGroupId, groupsRev)
 }
 
 /** 展开/折叠后让列表立即重绘（必须 notify，否则 ListView 不会重新读 getCount） */

@@ -37,8 +37,9 @@ internal fun ConversationGroupHook.handleHeaderLongPress(view: View?, group: WxG
             return true
         }
     log("收纳组长按: 打开分组操作菜单「${group.name}」")
-    val idx = sortedGroups().indexOfFirst { it.id == group.id }
-    val total = sortedGroups().size
+    val ordered = sortedGroups()
+    val idx = ordered.indexOfFirst { it.id == group.id }
+    val total = ordered.size
     val items = arrayOf(
         if (idx <= 0) "上移（已在最前）" else "上移",
         if (idx < 0 || idx >= total - 1) "下移（已在最后）" else "下移",
@@ -74,9 +75,19 @@ internal fun ConversationGroupHook.handleHeaderLongPress(view: View?, group: WxG
     return true
 }
 
+/**
+ * 取一份「可安全修改」的分组副本。
+ *
+ * `sortedGroups()` 返回的是缓存里的对象 —— 直接在它的 members/name 上改，
+ * 一旦 persistGroups 抛异常或还没写盘，缓存就已经是脏的（之后所有渲染都用脏数据）。
+ * 所有改分组的动作都先 copy 一份再改。
+ */
+internal fun ConversationGroupHook.mutableGroups(): MutableList<WxGroup> =
+    sortedGroups().mapTo(ArrayList()) { it.copy(members = it.members.toMutableSet()) }
+
 /** 把分组在列表里挪一格。挪完给所有分组写上显式 order，从此顺序完全听用户的。 */
 internal fun ConversationGroupHook.moveGroup(gid: String, delta: Int) {
-    val all = sortedGroups().toMutableList()
+    val all = mutableGroups()
     val i = all.indexOfFirst { it.id == gid }
     if (i < 0) return
     val j = i + delta
@@ -118,7 +129,7 @@ internal fun ConversationGroupHook.showRenameGroupDialog(act: android.app.Activi
                 toast(act, "分组名不能为空")
                 return@setPositiveButton
             }
-            val all = sortedGroups()
+            val all = mutableGroups()
             all.firstOrNull { it.id == gid }?.name = name
             persistGroups(all)
             toast(act, "已重命名为「$name」")
@@ -154,7 +165,7 @@ internal fun ConversationGroupHook.showIconPicker(act: android.app.Activity, gid
         .setNegativeButton("取消", null)
         .create()
     grid.setOnItemClickListener { _, _, pos, _ ->
-        val all = sortedGroups()
+        val all = mutableGroups()
         all.firstOrNull { it.id == gid }?.icon = icons[pos]
         persistGroups(all)
         toast(act, "已更换图标")
@@ -169,7 +180,7 @@ internal fun ConversationGroupHook.confirmClearMembers(act: android.app.Activity
         .setTitle("清空成员")
         .setMessage("把「${g.name}」里的 ${g.members.size} 个会话放回主列表？分组本身保留。")
         .setPositiveButton("清空") { _, _ ->
-            val all = sortedGroups()
+            val all = mutableGroups()
             all.firstOrNull { it.id == gid }?.members?.clear()
             persistGroups(all)
             toast(act, "已清空「${g.name}」")
@@ -261,7 +272,7 @@ internal fun ConversationGroupHook.showNewGroupDialog(act: android.app.Activity,
 }
 
 internal fun ConversationGroupHook.addTalkerToGroup(gid: String, talker: String) {
-    val all = sortedGroups()
+    val all = mutableGroups()
     val g = all.firstOrNull { it.id == gid } ?: return
     // 收纳组是「文件夹」语义：一个会话只能待在一个分组里，
     // 所以加入新分组时把它从其它分组里摘掉（和微信折叠群聊一致）。
@@ -284,7 +295,7 @@ internal fun ConversationGroupHook.addTalkerToGroup(gid: String, talker: String)
 
 /** 「移出分组」：把会话从它所属的分组里摘掉，会话回到主列表 */
 internal fun ConversationGroupHook.removeTalkerFromGroup(talker: String) {
-    val all = sortedGroups()
+    val all = mutableGroups()
     val names = ArrayList<String>()
     for (g in all) if (g.members.remove(talker)) names.add(g.name)
     if (names.isEmpty()) {
@@ -301,7 +312,7 @@ internal fun ConversationGroupHook.createGroup(rawName: String, talker: String?)
         toast(pendingActivity?.get() ?: appContext, "分组名不能为空")
         return
     }
-    val all = sortedGroups().toMutableList()
+    val all = mutableGroups()
     val existing = all.firstOrNull { it.name == name }
     if (existing != null) {
         if (talker != null) addTalkerToGroup(existing.id, talker) else toast(pendingActivity?.get(), "「$name」已存在")

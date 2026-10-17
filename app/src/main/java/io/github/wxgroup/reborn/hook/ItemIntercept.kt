@@ -87,8 +87,8 @@ internal fun ConversationGroupHook.installClickListenerWrapper() {
                         param.args[0] = OurItemClickListener(host, l)
                         log("已包装会话列表的 OnItemClickListener: ${l.javaClass.name}")
                         // 顺手把微信真正的点击消费方（ConversationListView.p0，8.0.78 是 w2）
-                        // 也挂上，只为看清它到底拿什么参数、为什么放弃（诊断用）
-                        hookRealConsumer(param.thisObject ?: return)
+                        // 也挂上，只为看清它到底拿什么参数、为什么放弃（纯诊断，release 关闭）
+                        if (DIAG_LOG) hookRealConsumer(param.thisObject ?: return)
                     } catch (t: Throwable) {
                         log("包装 OnItemClickListener 失败: ${t.message}")
                     }
