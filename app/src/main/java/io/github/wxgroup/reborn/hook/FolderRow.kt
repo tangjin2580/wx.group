@@ -103,22 +103,44 @@ internal fun ConversationGroupHook.createFolderRow(ctx: Context, clickable: Bool
     return row
 }
 
-internal fun ConversationGroupHook.bindFolderRow(view: View, group: WxGroup, inListCount: Int, unreadCount: Int = 0) {
+internal fun ConversationGroupHook.bindFolderRow(
+    view: View,
+    group: WxGroup,
+    inListCount: Int,
+    unreadCount: Int = 0,
+    senders: List<String> = emptyList()
+) {
     val holder = view.tag as? FolderHolder ?: return
+    val settings = wxSettings()
     holder.groupId = group.id
     val opened = openGroupId == group.id
     val total = group.members.size
     holder.name.text = group.name.ifBlank { "未命名分组" }
-    holder.name.textSize = if (opened) 18f else 15.5f
-    // 打开态：这一行就是二级页面的标题栏，副标题给出「成员数 + 未读总数 + 怎么返回」
+    // 紧凑模式：字号/内边距/图标都缩一档（放在绑定里做，设置变化后下一次绑定即生效，
+    // 不依赖 convertView 恰好被重建）
+    if (settings.compactRows) {
+        view.setPadding(dp(view.context, 16), dp(view.context, 5), dp(view.context, 16), dp(view.context, 5))
+        holder.name.textSize = if (opened) 17f else 14.5f
+        holder.sub.textSize = 11f
+    } else {
+        view.setPadding(dp(view.context, 16), dp(view.context, 10), dp(view.context, 16), dp(view.context, 10))
+        holder.name.textSize = if (opened) 18f else 15.5f
+        holder.sub.textSize = 12f
+    }
+    // 打开态：这一行就是二级页面的标题栏，副标题给出「成员数 + 未读总数」
     val unreadTip = if (unreadCount > 0) " · $unreadCount 条未读" else ""
-    holder.sub.text = when {
-        // 打开态右侧已有「‹ 返回」，副标题别再写"怎么退"，避免换行
-        opened -> "$inListCount 个会话$unreadTip"
+    val closedSub = when {
+        // 「A、B 和 C 发来消息」（微信折叠群聊同款）；发送者拿不到时回退成员数文案
+        settings.showSenders && unreadCount > 0 && senders.isNotEmpty() -> {
+            val more = unreadCount.toString()
+            if (senders.size == 1) "${senders[0]} 发来消息"
+            else "${senders[0]}、${senders[1]} 等 $more 条未读"
+        }
         total == 0 -> "空分组 · 长按管理"
         inListCount == 0 -> "$total 个成员$unreadTip · 均不在会话列表"
         else -> "$total 个成员$unreadTip · 点开查看"
     }
+    holder.sub.text = if (opened) "$inListCount 个会话$unreadTip" else closedSub
     holder.arrow.text = if (opened) "‹ 返回" else "▸"
     holder.arrow.textSize = if (opened) 14f else 15f
     val dark2 = isDark(view.context)
@@ -150,10 +172,28 @@ internal fun ConversationGroupHook.bindFolderRow(view: View, group: WxGroup, inL
         if (dark) (c and 0x00FFFFFF) or 0x2A000000 else (c and 0x00FFFFFF) or 0x22000000
     )
 
-    // 未读角标
+    // 未读角标：数字（18dp，99+ 封顶）或纯红点（10dp，无文字），设置页可切
     if (unreadCount > 0) {
         holder.unread.visibility = View.VISIBLE
-        holder.unread.text = if (unreadCount > 99) "99+" else unreadCount.toString()
+        if (settings.badgeDot) {
+            holder.unread.text = ""
+            val lp = holder.unread.layoutParams as? LinearLayout.LayoutParams
+            if (lp != null && lp.width != dp(view.context, 10)) {
+                lp.width = dp(view.context, 10)
+                lp.height = dp(view.context, 10)
+                holder.unread.layoutParams = lp
+            }
+            (holder.unread.background as? GradientDrawable)?.cornerRadius = dp(view.context, 5).toFloat()
+        } else {
+            holder.unread.text = if (unreadCount > 99) "99+" else unreadCount.toString()
+            val lp = holder.unread.layoutParams as? LinearLayout.LayoutParams
+            if (lp != null && lp.width != dp(view.context, 18)) {
+                lp.width = dp(view.context, 18)
+                lp.height = dp(view.context, 18)
+                holder.unread.layoutParams = lp
+            }
+            (holder.unread.background as? GradientDrawable)?.cornerRadius = dp(view.context, 9).toFloat()
+        }
     } else {
         holder.unread.visibility = View.GONE
     }

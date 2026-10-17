@@ -6,6 +6,7 @@ import android.view.Gravity
 import android.view.View
 import io.github.wxgroup.reborn.core.GroupTheme
 import io.github.wxgroup.reborn.core.WxGroup
+import io.github.wxgroup.reborn.xp.XposedHelpers
 
 /**
  * 分组操作：增删改、排序、图标、以及菜单动作落地。
@@ -37,12 +38,8 @@ internal fun ConversationGroupHook.handleHeaderLongPress(view: View?, group: WxG
             return true
         }
     log("收纳组长按: 打开分组操作菜单「${group.name}」")
-    val ordered = sortedGroups()
-    val idx = ordered.indexOfFirst { it.id == group.id }
-    val total = ordered.size
     val items = arrayOf(
-        if (idx <= 0) "上移（已在最前）" else "上移",
-        if (idx < 0 || idx >= total - 1) "下移（已在最后）" else "下移",
+        "添加成员…",
         "拖动排序…",
         "重命名",
         "换图标",
@@ -55,13 +52,12 @@ internal fun ConversationGroupHook.handleHeaderLongPress(view: View?, group: WxG
             .setItems(items) { _, which ->
                 try {
                     when (which) {
-                        0 -> moveGroup(group.id, -1)
-                        1 -> moveGroup(group.id, 1)
-                        2 -> launchGroupSorter(act)
-                        3 -> showRenameGroupDialog(act, group.id)
-                        4 -> showIconPicker(act, group.id)
-                        5 -> confirmClearMembers(act, group.id)
-                        6 -> confirmDeleteGroup(act, group.id)
+                        0 -> showBatchMembers(act, group.id)
+                        1 -> launchGroupSorter(act)
+                        2 -> showRenameGroupDialog(act, group.id)
+                        3 -> showIconPicker(act, group.id)
+                        4 -> confirmClearMembers(act, group.id)
+                        5 -> confirmDeleteGroup(act, group.id)
                     }
                 } catch (t: Throwable) {
                     log("分组操作失败: ${t.javaClass.simpleName}: ${t.message}")
@@ -85,26 +81,90 @@ internal fun ConversationGroupHook.handleHeaderLongPress(view: View?, group: WxG
 internal fun ConversationGroupHook.mutableGroups(): MutableList<WxGroup> =
     sortedGroups().mapTo(ArrayList()) { it.copy(members = it.members.toMutableSet()) }
 
-/** 把分组在列表里挪一格。挪完给所有分组写上显式 order，从此顺序完全听用户的。 */
-internal fun ConversationGroupHook.moveGroup(gid: String, delta: Int) {
-    val all = mutableGroups()
-    val i = all.indexOfFirst { it.id == gid }
-    if (i < 0) return
-    val j = i + delta
-    val act = pendingActivity?.get() ?: appContext
-    if (j < 0 || j >= all.size) {
-        toast(act, if (delta < 0) "已经在最前面了" else "已经在最后面了")
-        return
-    }
-    val g = all.removeAt(i)
-    all.add(j, g)
-    normalizeOrder(all)
-    persistGroups(all)
-    toast(act, "已${if (delta < 0) "上移" else "下移"}「${g.name}」")
-}
+/** 把分组在列表里挪一格 → 已被「拖动排序」页取代（长按分组 → 拖动排序），函数移除 */
 
 internal fun ConversationGroupHook.normalizeOrder(all: List<WxGroup>) {
     all.forEachIndexed { i, g -> g.order = i + 1 }
+}
+
+/**
+ * 批量成员管理（分组行长按 → 「添加成员…」）。
+ *
+ * 列出当前会话列表里的全部会话（显示名 + 未读标记），勾选状态 = 当前成员；
+ * 点「保存」后按勾选结果**整表同步**：新勾的加入（同时从其它组摘掉，保持单组语义），
+ * 取消勾的移出。一次保存 = 批量加人 + 批量移人，不用再逐个长按会话。
+ */
+internal fun ConversationGroupHook.showBatchMembers(act: android.app.Activity, gid: String) {
+    val a = adapterRef?.get()
+    val rows = a?.let { legacyRows(it) }
+    if (a == null || rows == null) {
+        toast(act, "拿不到会话列表，请回到微信会话页再试")
+        return
+    }
+    // 会话列表当前顺序就是用户熟悉的新旧顺序，直接沿用
+    data class Conv(val talker: String, val label: String, val unread: Int)
+    val convs = ArrayList<Conv>(rows.size)
+    val seen = HashSet<String>()
+    for (row in rows) {
+        try {
+            val k4 = XposedHelpers.getObjectField(row, "d") ?: continue
+            val u = talkerOf(k4) ?: continue
+            if (!seen.add(u)) continue
+            val name = displayNameOf(k4) ?: u
+            val unread = unreadOf(k4)
+            convs.add(Conv(u, if (unread > 0) "$name（$unread 条未读）" else name, unread))
+        } catch (_: Throwable) {
+        }
+    }
+    if (convs.isEmpty()) {
+        toast(act, "会话列表为空")
+        return
+    }
+    val g = sortedGroups().firstOrNull { it.id == gid } ?: return
+    val checked = BooleanArray(convs.size) { convs[it].talker in g.members }
+    val labels = convs.map { c ->
+        // 让用户知道这个会话现在收在哪个组，避免「加了没反应」的困惑
+        val owner = sortedGroups().firstOrNull { c.talker in it.members && it.id != gid }?.name
+        if (owner != null) "${c.label} · 在「$owner」" else c.label
+    }
+    try {
+        android.app.AlertDialog.Builder(act)
+            .setTitle("管理「${g.name}」的成员（${g.members.size}）")
+            .setMultiChoiceItems(labels.toTypedArray(), checked) { _, _, _ -> }
+            .setPositiveButton("保存") { _, _ ->
+                val all = mutableGroups()
+                val target = all.firstOrNull { it.id == gid } ?: return@setPositiveButton
+                var added = 0
+                var removed = 0
+                for (i in convs.indices) {
+                    val u = convs[i].talker
+                    val was = u in target.members
+                    val now = checked[i]
+                    if (!was && now) {
+                        for (other in all) other.members.remove(u)  // 单组语义
+                        target.members.add(u)
+                        added++
+                    } else if (was && !now) {
+                        target.members.remove(u)
+                        removed++
+                    }
+                }
+                if (added == 0 && removed == 0) {
+                    toast(act, "没有改动")
+                    return@setPositiveButton
+                }
+                persistGroups(all)
+                toast(act, buildString {
+                    if (added > 0) append("已加入 $added 个")
+                    if (added > 0 && removed > 0) append("、")
+                    if (removed > 0) append("已移出 $removed 个")
+                })
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    } catch (t: Throwable) {
+        log("批量成员对话框失败: ${t.javaClass.simpleName}: ${t.message}")
+    }
 }
 
 internal fun ConversationGroupHook.showRenameGroupDialog(act: android.app.Activity, gid: String) {
@@ -228,28 +288,92 @@ internal fun ConversationGroupHook.onMenuAction(block: (android.app.Activity, St
     }
 }
 
-/** 「添加到分组」：列出全部分组让用户挑（已包含的标注出来），末尾附「新建分组」 */
+/**
+ * 「添加到分组」：列出全部分组让用户挑，**顶部带搜索框**（分组多了以后纯列表不好找），
+ * 末尾附「新建分组」。
+ */
 internal fun ConversationGroupHook.showGroupChooser(act: android.app.Activity, talker: String?) {
     if (talker == null) {
         showNewGroupDialog(act, null)
         return
     }
     val groups = sortedGroups()
-    val labels = ArrayList<String>(groups.size + 1)
-    for (g in groups) labels.add(if (talker in g.members) "${g.name}（已包含）" else g.name)
-    labels.add("＋ 新建分组…")
-    android.app.AlertDialog.Builder(act)
-        .setTitle("添加到分组")
-        .setItems(labels.toTypedArray()) { _, which ->
-            try {
-                if (which >= groups.size) showNewGroupDialog(act, talker)
-                else addTalkerToGroup(groups[which].id, talker)
-            } catch (t: Throwable) {
-                log("选择分组失败: ${t.message}")
+    val ctx = act
+
+    fun labelOf(g: WxGroup): String = if (talker in g.members) "${g.name}（已包含）" else g.name
+
+    // 自建视图：搜索框 + 列表。simple_list_item_1 够用，还能让搜索过滤实时生效
+    val root = android.widget.LinearLayout(ctx).apply { orientation = android.widget.LinearLayout.VERTICAL }
+    val input = android.widget.EditText(ctx).apply {
+        hint = "搜索分组…"
+        setSingleLine(true)
+        setPadding(dp(ctx, 20), dp(ctx, 12), dp(ctx, 20), dp(ctx, 4))
+        setTextColor(if (isDark(ctx)) Color.WHITE else Color.BLACK)
+        setHintTextColor(if (isDark(ctx)) Color.parseColor("#8a8a8e") else Color.parseColor("#999999"))
+    }
+    val list = android.widget.ListView(ctx)
+    root.addView(input, android.widget.LinearLayout.LayoutParams(
+        android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT))
+    root.addView(list, android.widget.LinearLayout.LayoutParams(
+        android.view.ViewGroup.LayoutParams.MATCH_PARENT, dp(ctx, 320)))
+
+    fun pick(g: WxGroup) {
+        try { addTalkerToGroup(g.id, talker) } catch (t: Throwable) { log("选择分组失败: ${t.message}") }
+    }
+
+    val adapter = object : android.widget.BaseAdapter() {
+        private var shown: List<Any> = emptyList()   // WxGroup 或 "NEW" 标记
+        private var query = ""
+        init { refilter("") }
+        fun refilter(q: String) {
+            query = q.trim()
+            val filtered: List<Any> = if (query.isEmpty()) {
+                groups.map { it as Any } + "NEW"
+            } else {
+                // 名称或成员 username 命中都算（群名不直观时可以直接搜 wxid/群号）
+                val hit = groups.filter { g ->
+                    g.name.contains(query, true) || g.members.any { it.contains(query, true) }
+                }
+                hit.map { it as Any } + "NEW"
             }
+            shown = filtered
+            notifyDataSetChanged()
         }
+        override fun getCount() = shown.size
+        override fun getItem(position: Int) = shown[position]
+        override fun getItemId(position: Int) = position.toLong()
+        override fun getView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
+            val tv = (convertView as? android.widget.TextView) ?: android.widget.TextView(ctx).apply {
+                textSize = 16f
+                setPadding(dp(ctx, 20), dp(ctx, 12), dp(ctx, 20), dp(ctx, 12))
+                setTextColor(if (isDark(ctx)) Color.WHITE else Color.BLACK)
+            }
+            tv.text = when (val it = shown[position]) {
+                "NEW" -> "＋ 新建分组…"
+                is WxGroup -> labelOf(it)
+                else -> it.toString()
+            }
+            return tv
+        }
+    }
+    list.adapter = adapter
+    input.addTextChangedListener(object : android.text.TextWatcher {
+        override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        override fun afterTextChanged(s: android.text.Editable?) = adapter.refilter(s?.toString() ?: "")
+    })
+    val dlg = android.app.AlertDialog.Builder(act)
+        .setTitle("添加到分组")
+        .setView(root)
         .setNegativeButton("取消", null)
-        .show()
+        .create()
+    list.setOnItemClickListener { _, _, pos, _ ->
+        when (val it = adapter.getItem(pos)) {
+            "NEW" -> { dlg.dismiss(); showNewGroupDialog(act, talker) }
+            is WxGroup -> { dlg.dismiss(); pick(it) }
+        }
+    }
+    dlg.show()
 }
 
 /** 「新建分组」：输入名称，建完直接把当前会话放进去 */

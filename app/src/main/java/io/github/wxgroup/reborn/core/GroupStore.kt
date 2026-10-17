@@ -29,6 +29,7 @@ object GroupStore {
     const val PREFS = "wxgroup"
     const val KEY_GROUPS = "groups"
     const val KEY_SIGNATURE = "signature"
+    const val KEY_SETTINGS = "settings"
 
     /**
      * 跨进程可读缓存文件：/data/local/tmp/ 是 1777（world-writable）且 SELinux 对 untrusted_app 可读，
@@ -36,6 +37,15 @@ object GroupStore {
      * createPackageContext 的封锁，以及 app_data_file 跨应用 SELinux 限制）。
      */
     private const val TMP_GROUPS = "/data/local/tmp/wxgroup_reborn_groups.json"
+
+    /** 偏好设置的跨进程镜像（同 TMP_GROUPS 的通道，见 WxSettings 注释） */
+    private const val TMP_SETTINGS = "/data/local/tmp/wxgroup_reborn_settings.json"
+
+    /** 微信私有目录里的偏好落点（微信侧一般不写它，仅作兼容读取） */
+    private val CHATGROUP_SETTINGS_FILES = listOf(
+        "/data/user/0/com.tencent.mm/files/chatgroup_settings.json",
+        "/data/data/com.tencent.mm/files/chatgroup_settings.json"
+    )
 
     /**
      * 微信私有目录里的分组落点。
@@ -90,6 +100,99 @@ object GroupStore {
         JSONObject(json).optInt("revision", 0)
     } catch (t: Throwable) {
         0
+    }
+
+    // ===== 显示偏好（模块 App 侧写，微信 Hook 侧读） =====
+
+    fun getSettings(ctx: Context): WxSettings = try {
+        val s = prefs(ctx).getString(KEY_SETTINGS, null)
+        if (s.isNullOrBlank()) WxSettings.DEFAULT else WxSettings.fromJson(JSONObject(s))
+    } catch (t: Throwable) {
+        WxSettings.DEFAULT
+    }
+
+    /** 写偏好：SharedPreferences + 镜像 + 通知微信（微信侧缓存 2s TTL，很快生效） */
+    fun putSettings(ctx: Context, s: WxSettings) {
+        val text = s.toJson().toString()
+        writePref(ctx, KEY_SETTINGS, text)
+        try {
+            if (atomicWriteText(java.io.File(TMP_SETTINGS), text)) makeWorldReadable(TMP_SETTINGS)
+        } catch (t: Throwable) {
+            Log.e(TAG, "镜像偏好失败: ${t.message}")
+        }
+        notifyGroupsChanged(ctx)
+    }
+
+    // ===== 微信 Hook 侧读偏好 =====
+
+    private var settingsCacheText: String? = null
+    private var settingsCacheAt = 0L
+
+    /**
+     * 微信进程读取偏好。带 2s TTL 缓存 —— 这个函数会被组行绑定高频调用，
+     * 每次都 stat 两个文件太浪费；偏好本来也只在模块 App 里改，2s 延迟无感。
+     */
+    @Synchronized
+    fun settingsXposed(): WxSettings {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (settingsCacheText != null && now - settingsCacheAt < 2000L) {
+            return parseSettings(settingsCacheText)
+        }
+        // 模块 App 只写镜像；微信私有目录那份一般不存在，存在就以更晚的为准（兼容手工放置）
+        val tmp = java.io.File(TMP_SETTINGS).takeIf { it.exists() }
+        val priv = firstExisting(CHATGROUP_SETTINGS_FILES)
+        val text = when {
+            tmp == null && priv == null -> null
+            tmp == null -> priv?.readText()
+            priv == null -> tmp.readText()
+            tmp.lastModified() >= priv.lastModified() -> tmp.readText()
+            else -> priv.readText()
+        }
+        settingsCacheText = text
+        settingsCacheAt = now
+        return parseSettings(text)
+    }
+
+    private fun parseSettings(text: String?): WxSettings = try {
+        if (text.isNullOrBlank()) WxSettings.DEFAULT else WxSettings.fromJson(JSONObject(text))
+    } catch (t: Throwable) {
+        WxSettings.DEFAULT
+    }
+
+    // ===== 导入 / 导出（设置页的备份入口） =====
+
+    /**
+     * 导出分组为可移植 JSON（完整 WxGroup 字段，{@link #parseGroups} 能直接吃回来）。
+     * 先并一次镜像，保证微信里刚做的改动不会漏。
+     */
+    fun exportGroupsJson(ctx: Context): String {
+        importFromTmp(ctx)
+        val groups = sortForDisplay(getGroups(ctx))
+        val root = JSONObject()
+            .put("app", MODULE_PKG)
+            .put("exportedAt", System.currentTimeMillis())
+            .put("groups", JSONArray().also { a -> groups.forEach { a.put(it.toJson()) } })
+        return root.toString(2)
+    }
+
+    /** 从导出的 JSON 导入分组（整表替换）。返回导入数量；JSON 非法返回 -1 */
+    fun importGroupsJson(ctx: Context, text: String): Int {
+        val groups = try {
+            val trimmed = text.trim()
+            val arr = when {
+                trimmed.startsWith("[") -> JSONArray(trimmed)
+                else -> JSONObject(trimmed).optJSONArray("groups") ?: return -1
+            }
+            (0 until arr.length()).mapNotNull { i ->
+                try { WxGroup.fromJson(arr.getJSONObject(i)) } catch (t: Throwable) { null }
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "导入分组 JSON 解析失败: ${t.message}")
+            return -1
+        }
+        putGroups(ctx, groups)
+        Log.i(TAG, "已导入 ${groups.size} 个分组")
+        return groups.size
     }
 
     // ===== 分组（模块 App 侧读写，全部以 SharedPreferences 为存储） =====

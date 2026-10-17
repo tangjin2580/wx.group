@@ -283,12 +283,16 @@ internal fun ConversationGroupHook.unreadMapFor(adapter: Any): Map<String, Int> 
         return unreadSnapshot
     }
     val map = HashMap<String, Int>(n * 2)
+    val names = HashMap<String, String>(n * 2)
     for (row in rows) {
         val k4 = XposedHelpers.getObjectField(row, "d") ?: continue
         val u = talkerOf(k4) ?: continue
         map[u] = unreadOf(k4)
+        // 显示名顺手一起取了（同一循环、同一批字段缓存），发送者副标题就不需要第二次扫描
+        displayNameOf(k4)?.let { names[u] = it }
     }
     unreadSnapshot = map
+    displayNamesSnapshot = names
     unreadSnapshotAt = now
     unreadSnapshotRows = n
     return map
@@ -302,6 +306,73 @@ internal fun ConversationGroupHook.groupUnread(adapter: Any, group: WxGroup): In
     var sum = 0
     for (m in group.members) sum += map[m] ?: 0
     return sum
+}
+
+// ==================================================================================
+// 显示名（未读发送者用）
+// ==================================================================================
+
+/**
+ * 会话显示名的候选字段。优先备注（用户给联系人起的备注名），再昵称。
+ * `field_` 前缀 = 数据库列名，不参与混淆，跨版本稳。
+ */
+private val DISPLAY_NAME_FIELDS = listOf("field_conRemark", "field_nickname", "field_displayName", "field_nickName")
+
+/** k4 类 → 显示名候选字段（沿继承链解析一次） */
+internal val displayNameFieldsCache = java.util.concurrent.ConcurrentHashMap<Class<*>, List<Field>>()
+
+private fun displayNameFieldsOf(cls: Class<*>): List<Field> =
+    displayNameFieldsCache.getOrPut(cls) {
+        val out = ArrayList<Field>(DISPLAY_NAME_FIELDS.size)
+        for (n in DISPLAY_NAME_FIELDS) {
+            val f = XposedHelpers.fieldOf(cls, n) ?: continue
+            if (out.none { it === f }) out.add(f)
+        }
+        out
+    }
+
+internal fun ConversationGroupHook.displayNameOf(k4: Any?): String? {
+    if (k4 == null) return null
+    for (f in displayNameFieldsOf(k4.javaClass)) {
+        val v = try { (f.get(k4) as? String)?.trim() } catch (t: Throwable) { null }
+        if (!v.isNullOrBlank()) return v
+    }
+    return null
+}
+
+/**
+ * 组内未读发送者（最多前 2 个，用于副标题「A、B 和 C 发来消息」）。
+ * 全查快照，不额外扫列表。顺序跟会话列表一致（最新会话在前），正好是「谁刚发消息」。
+ */
+internal fun ConversationGroupHook.groupSenders(adapter: Any, group: WxGroup, limit: Int = 2): List<String> {
+    val map = unreadMapFor(adapter)
+    if (map.isEmpty() || group.members.isEmpty()) return emptyList()
+    val names = displayNamesSnapshot
+    val out = ArrayList<String>(limit)
+    for (m in group.members) {
+        if ((map[m] ?: 0) <= 0) continue
+        out.add(names[m] ?: m)
+        if (out.size >= limit) break
+    }
+    return out
+}
+
+/** 模块设置（2s TTL 缓存，见 GroupStore.settingsXposed） */
+internal var wxSettingsCache: io.github.wxgroup.reborn.core.WxSettings? = null
+internal var wxSettingsAt = 0L
+
+internal fun ConversationGroupHook.wxSettings(): io.github.wxgroup.reborn.core.WxSettings {
+    val now = SystemClock.uptimeMillis()
+    val c = wxSettingsCache
+    if (c != null && now - wxSettingsAt < 2000L) return c
+    val s = try {
+        io.github.wxgroup.reborn.core.GroupStore.settingsXposed()
+    } catch (t: Throwable) {
+        io.github.wxgroup.reborn.core.WxSettings.DEFAULT
+    }
+    wxSettingsCache = s
+    wxSettingsAt = now
+    return s
 }
 
 // ==================================================================================
@@ -386,8 +457,12 @@ internal fun ConversationGroupHook.buildLegacyModel(a: Any, realCount: Int, grou
         openGroupId = null
     }
 
+    val hideEmpty = wxSettings().hideEmptyGroups
     for (g in groups) {
         val memberPos = membersOf(g)
+        // 「隐藏空分组」：成员一个都不在会话列表里的组不占行（设置页可开关）。
+        // 有成员但都收拢在其他组（owner 不归它）同样按空处理 —— 用户看到的就是净列表。
+        if (hideEmpty && memberPos.isEmpty()) continue
         entries.add(VEntry(TYPE_HEADER, g, -1, memberPos.size))
         hidden += memberPos.size
     }
@@ -421,7 +496,8 @@ internal fun ConversationGroupHook.onLegacyGetView(param: MethodHookParam) {
             )
             val adapter = param.thisObject
             val unread = if (adapter != null) groupUnread(adapter, e.group) else 0
-            bindFolderRow(view, e.group, e.memberCount, unread)
+            val senders = if (adapter != null && wxSettings().showSenders) groupSenders(adapter, e.group) else emptyList()
+            bindFolderRow(view, e.group, e.memberCount, unread, senders)
             if (legacyRenderLogged < 10) {
                 legacyRenderLogged++
                 log("渲染收纳组行: ${e.group.name} @ pos=$pos")

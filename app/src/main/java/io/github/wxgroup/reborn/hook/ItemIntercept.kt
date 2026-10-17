@@ -287,15 +287,54 @@ internal fun ConversationGroupHook.installItemLongPressInterceptor() {
  */
 internal fun ConversationGroupHook.handleHeaderTap(gid: String) {
     val now = android.os.SystemClock.uptimeMillis()
-    if (lastTapGid == gid && now - lastTapAt < 300L) return
+    val quickReTap = lastTapGid == gid && now - lastTapAt < 350L
     lastTapGid = gid
     lastTapAt = now
     val g = sortedGroups().firstOrNull { it.id == gid }
     val wasOpen = openGroupId == gid
+    if (quickReTap && wasOpen) {
+        // 双击已打开的分组行 → 跳到组内第一个未读会话（类似微信双击底部 tab 回顶部）。
+        // 注意这层在 300ms 去重之后，所以不会和「展开/折叠」抢：快速第二击不再折叠。
+        lastTapGid = null   // 双击消费掉，避免三连击再触发一次
+        jumpToFirstUnread(gid)
+        return
+    }
     openGroupId = if (wasOpen) null else gid
     log("收纳组点击: ${g?.name ?: gid} -> ${if (wasOpen) "返回会话列表" else "打开二级页面"}")
     notifyList()
     animatePageSwitch(entering = !wasOpen)
+}
+
+/**
+ * 双击分组行：滚动到组内第一个有未读的会话。
+ * 只在二级页面（组已打开）里生效 —— 打开状态下模型里全部真实行都是该组成员。
+ */
+internal fun ConversationGroupHook.jumpToFirstUnread(gid: String) {
+    try {
+        val lv = legacyListView?.get() as? android.widget.ListView ?: return
+        val a = adapterRef?.get() ?: return
+        val model = legacyModel ?: return
+        if (openGroupId != gid) return
+        val map = unreadMapFor(a)
+        val rows = legacyRows(a) ?: return
+        val hv = headerCount(lv)
+        var target = -1
+        for (i in model.entries.indices) {
+            val e = model.entries[i]
+            if (e.type != TYPE_REAL || e.realPos !in rows.indices) continue
+            val k4 = XposedHelpers.getObjectField(rows[e.realPos], "d") ?: continue
+            val u = talkerOf(k4) ?: continue
+            if ((map[u] ?: 0) > 0) { target = i; break }
+        }
+        if (target < 0) {
+            toast(lv.context, "组内没有未读消息")
+            return
+        }
+        lv.setSelection(hv + target)
+        log("双击分组行: 跳到组内第一个未读 @ 虚拟行 $target")
+    } catch (t: Throwable) {
+        log("双击跳未读失败: ${t.javaClass.simpleName}: ${t.message}")
+    }
 }
 
 /** 退出二级页面（返回键 / 分组被删除时调用） */
@@ -317,7 +356,17 @@ private fun ConversationGroupHook.animatePageSwitch(entering: Boolean) {
     val lv = legacyListView?.get() as? android.widget.ListView ?: return
     lv.post {
         try {
-            lv.setSelection(0)                      // 进/出二级页面都回到顶部
+            if (entering) {
+                // 展开时滚到组头：分组行原本可能在屏幕下半部分，点开后成员区在视口外，
+                // 不滚一下用户要自己滑半天才看到进来了什么。
+                val hv = headerCount(lv)
+                val idx = legacyModel?.entries?.indexOfFirst {
+                    it.type == TYPE_HEADER && it.group?.id == openGroupId
+                } ?: -1
+                lv.setSelection(if (idx >= 0) hv + idx else 0)
+            } else {
+                lv.setSelection(0)                  // 返回主列表回到顶部
+            }
             val dx = lv.width * 0.18f               // 位移取列表宽度的 18%
             // 新内容从侧面推进来：进入时从右侧进，退出时从左侧退回来，
             // 配合淡入淡出，视觉上就是一次「页面切换」而不是「列表刷新」。

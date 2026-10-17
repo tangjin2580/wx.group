@@ -1,13 +1,20 @@
 package io.github.wxgroup.reborn.ui
 
 import android.app.ActivityManager
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Bundle
 import android.widget.Button
+import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import android.content.Intent
 import io.github.wxgroup.reborn.R
+import io.github.wxgroup.reborn.core.GroupStore
+import io.github.wxgroup.reborn.core.WxSettings
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -15,9 +22,39 @@ class SettingsActivity : AppCompatActivity() {
         const val WECHAT_PACKAGE = "com.tencent.mm"
     }
 
+    private lateinit var swBadgeDot: SwitchCompat
+    private lateinit var swHideEmpty: SwitchCompat
+    private lateinit var swCompact: SwitchCompat
+    private lateinit var swSenders: SwitchCompat
+
+    private fun collect(): WxSettings = WxSettings(
+        badgeDot = swBadgeDot.isChecked,
+        hideEmptyGroups = swHideEmpty.isChecked,
+        compactRows = swCompact.isChecked,
+        showSenders = swSenders.isChecked
+    )
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
+
+        // ── 显示偏好开关 ──────────────────────────────────────────────
+        // 写入后走「镜像 + Provider 通知」通道，微信里的 Hook 2s 内拿到新值，
+        // 不用重启微信（轮询兜底，最坏也就 1.2s 一轮的检测节奏）。
+        val s = GroupStore.getSettings(this)
+        swBadgeDot = findViewById(R.id.sw_badge_dot)
+        swHideEmpty = findViewById(R.id.sw_hide_empty)
+        swCompact = findViewById(R.id.sw_compact)
+        swSenders = findViewById(R.id.sw_senders)
+        swBadgeDot.isChecked = s.badgeDot
+        swHideEmpty.isChecked = s.hideEmptyGroups
+        swCompact.isChecked = s.compactRows
+        swSenders.isChecked = s.showSenders
+        val persist = { GroupStore.putSettings(this, collect()) }
+        swBadgeDot.setOnCheckedChangeListener { _, _ -> persist() }
+        swHideEmpty.setOnCheckedChangeListener { _, _ -> persist() }
+        swCompact.setOnCheckedChangeListener { _, _ -> persist() }
+        swSenders.setOnCheckedChangeListener { _, _ -> persist() }
 
         findViewById<Button>(R.id.btn_groups).setOnClickListener {
             startActivity(Intent(this, GroupManageActivity::class.java))
@@ -25,6 +62,11 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_signatures).setOnClickListener {
             startActivity(Intent(this, SignatureActivity::class.java))
         }
+
+        // ── 分组备份 ─────────────────────────────────────────────────
+        findViewById<Button>(R.id.btn_export).setOnClickListener { exportGroups() }
+        findViewById<Button>(R.id.btn_import).setOnClickListener { importGroupsDialog() }
+
         findViewById<Button>(R.id.btn_kill_wechat).setOnClickListener {
             confirmKillWeChat()
         }
@@ -35,6 +77,51 @@ class SettingsActivity : AppCompatActivity() {
                 .setPositiveButton(android.R.string.ok, null)
                 .show()
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 导出：分组 JSON → 剪贴板（顺手展示预览，方便直接全选复制别的工具里）
+    // 导入：粘贴 JSON → 整表替换。重装微信 / 换机时靠这对操作救回分组。
+    // ─────────────────────────────────────────────────────────────
+    private fun exportGroups() {
+        try {
+            val json = GroupStore.exportGroupsJson(this)
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            cm?.setPrimaryClip(ClipData.newPlainText("wxgroup_backup", json))
+            val n = GroupStore.getGroups(this).size
+            AlertDialog.Builder(this)
+                .setTitle(R.string.settings_export)
+                .setMessage(getString(R.string.settings_export_done, n) + "\n\n" +
+                    json.take(400) + if (json.length > 400) "\n…（已完整复制）" else "")
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+        } catch (t: Throwable) {
+            Toast.makeText(this, getString(R.string.settings_export_fail, t.message ?: ""), Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun importGroupsDialog() {
+        val input = EditText(this).apply {
+            hint = getString(R.string.settings_import_hint)
+            minLines = 4
+            gravity = android.view.Gravity.TOP
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_import)
+            .setMessage(getString(R.string.settings_import_hint))
+            .setView(input)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val text = input.text?.toString()?.trim().orEmpty()
+                if (text.isEmpty()) {
+                    Toast.makeText(this, R.string.settings_import_empty, Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                val n = GroupStore.importGroupsJson(this, text)
+                val msg = if (n >= 0) getString(R.string.settings_import_ok, n) else getString(R.string.settings_import_bad)
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     /**
@@ -74,4 +161,3 @@ class SettingsActivity : AppCompatActivity() {
         Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
     }
 }
-

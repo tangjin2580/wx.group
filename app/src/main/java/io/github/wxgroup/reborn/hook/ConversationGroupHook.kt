@@ -153,6 +153,8 @@ class ConversationGroupHook {
      * 既保证新消息后角标能自己更新（400ms 内），又不会把渲染路径拖慢。
      */
     internal var unreadSnapshot: Map<String, Int> = emptyMap()
+    /** username → 显示名（备注/昵称），与未读快照同一轮扫描产出，供「发送者副标题」用 */
+    internal var displayNamesSnapshot: Map<String, String> = emptyMap()
     internal var unreadSnapshotAt = 0L
     internal var unreadSnapshotRows = -1
     internal var unreadDiffLogged = 0

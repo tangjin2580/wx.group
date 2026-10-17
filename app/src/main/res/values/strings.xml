@@ -11,6 +11,20 @@
     <string name="settings_kill_wechat_done">已强制停止微信</string>
     <string name="settings_kill_wechat_fail">未能提权强杀（需 root），已尝试后台方式；请手动结束微信</string>
     <string name="settings_about">关于</string>
+    <string name="settings_display_title">显示偏好（微信内即时生效）</string>
+    <string name="settings_badge_dot">未读角标用纯红点（不用数字）</string>
+    <string name="settings_hide_empty">隐藏不在会话列表的空分组</string>
+    <string name="settings_compact">收纳组行紧凑模式</string>
+    <string name="settings_senders">组行副标题显示未读发送者</string>
+    <string name="settings_backup_title">分组备份</string>
+    <string name="settings_export">导出分组（复制到剪贴板）</string>
+    <string name="settings_import">从文本导入分组…</string>
+    <string name="settings_export_done">已复制 %1$d 个分组到剪贴板，可粘贴到备忘录/聊天保存</string>
+    <string name="settings_export_fail">导出失败：%1$s</string>
+    <string name="settings_import_hint">粘贴之前导出的分组 JSON，导入会【整表替换】当前分组</string>
+    <string name="settings_import_ok">已导入 %1$d 个分组</string>
+    <string name="settings_import_bad">JSON 解析失败，未导入</string>
+    <string name="settings_import_empty">内容为空</string>
     <string name="settings_hint">本模块接管微信会话列表，在列表顶部插入可点开的「收纳组」。
 使用前请在「微信签名配置」中填入你手机微信版本对应的类/方法签名，否则分组不会生效。</string>
 

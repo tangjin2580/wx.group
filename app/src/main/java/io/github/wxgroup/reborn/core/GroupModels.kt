@@ -4,6 +4,40 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
+ * 模块级显示偏好（设置页里那些开关）。
+ *
+ * 存储：模块 App 写 SharedPreferences + /data/local/tmp 镜像（和分组同一套通道），
+ * 微信进程里的 Hook 读镜像 —— 所以微信侧**不用重启**也能看到偏好变化（轮询/通知兜底）。
+ */
+data class WxSettings(
+    /** 未读角标用纯红点（true）还是数字（false） */
+    val badgeDot: Boolean = false,
+    /** 主列表隐藏「没有成员在会话列表里」的空分组行 */
+    val hideEmptyGroups: Boolean = false,
+    /** 收纳组行紧凑模式（更小的内边距/字号） */
+    val compactRows: Boolean = false,
+    /** 组行副标题显示未读发送者（「A、B 和 C 发来消息」） */
+    val showSenders: Boolean = false
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("badgeDot", badgeDot)
+        .put("hideEmptyGroups", hideEmptyGroups)
+        .put("compactRows", compactRows)
+        .put("showSenders", showSenders)
+
+    companion object {
+        fun fromJson(o: JSONObject): WxSettings = WxSettings(
+            badgeDot = o.optBoolean("badgeDot", false),
+            hideEmptyGroups = o.optBoolean("hideEmptyGroups", false),
+            compactRows = o.optBoolean("compactRows", false),
+            showSenders = o.optBoolean("showSenders", false)
+        )
+
+        val DEFAULT = WxSettings()
+    }
+}
+
+/**
  * 一个分组：包含名称、置顶、免打扰、成员 username 集合。
  *
  * 存储有两处：
