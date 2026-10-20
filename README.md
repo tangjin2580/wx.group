@@ -13,6 +13,14 @@
 
 ## 更新日志
 
+### 未发布
+
+- **修「删掉的分组又回来」**：微信侧原先按 id 对「微信私有目录 ↔ 镜像」取并集，一侧删掉的分组会被另一侧旧文件带回；模块 App 导入镜像时也是按 id 合并。现在两边都改为整份取最新（每个写入方本来就写完整表）。
+- **模块 App 写分组不再覆盖微信侧改动**：每次修改前先并入镜像；改名 / 置顶 / 免打扰只改对应字段；排序页只写回 order，不再整表替换；App 里「加入分组」也遵守单组语义。
+- **隐私**：Provider 只回应微信与模块自身；签名编辑页不再导出。
+- **同步通道自检**：镜像文件缺失时设置页给出提示，并可一键用 root 创建（含 settings 文件）。
+- `su` 强杀改到后台线程，避免等待授权时 ANR；Hook 只在微信主进程挂载。
+
 ### v0.1.4（2026-10-18）—— 修「排序/设置改了不生效」
 
 **根因**：v0.1.2 引入的「tmp + rename 原子写」在 `/data/local/tmp` 上不可用 —— 该目录是
@@ -272,9 +280,9 @@ export ANDROID_SDK_ROOT=/Users/Mr.li/Library/Android/sdk   # 换成你自己的 
 3. 在该模块的 **作用域** 里，确保 **微信 (com.tencent.mm)** 已勾选（manifest 里也已内置默认作用域 `com.tencent.mm`）。
 4. **（一次性，需 root）预创建跨进程镜像文件**——这是 8.0.78 / HyperOS 上的必要步骤，因为模块 App 进程在 SELinux 下无法自行在 `/data/local/tmp` 新建文件，只能覆盖已存在的世界可写文件：
    ```bash
-   adb shell su -c 'touch /data/local/tmp/wxgroup_reborn_groups.json && chmod 666 /data/local/tmp/wxgroup_reborn_groups.json'
+   adb shell su -c 'for f in groups settings; do p=/data/local/tmp/wxgroup_reborn_$f.json; touch $p && chmod 666 $p; done'
    ```
-   > 若执行后该文件仍存在（大小 0 也无妨），说明通道已就绪；模块 App 每次改分组都会覆盖它。
+   > 也可以直接在模块 App 设置页点「用 root 创建同步文件」（通道未就绪时才显示）。文件大小为 0 也无妨，模块每次保存都会覆盖。
 5. 重启微信（或强制停止后重新打开）使 Hook 生效。
 6. **在微信里使用**（全部操作都在微信界面内完成，不需要开模块 App）：
    - 会话列表顶部会出现**分组收纳行**（折叠态，点击展开/收起）。

@@ -21,7 +21,7 @@ class SignatureActivity : AppCompatActivity() {
         etJson = findViewById(R.id.et_json)
         // 优先显示已保存的，否则显示默认
         val saved = GroupStore.getSignatures(this)
-        etJson.setText(saved?.toJson()?.toString(2) ?: GroupStore.defaultSignatureJson(this))
+        etJson.setText(saved?.toJson()?.toString(2) ?: GroupStore.defaultSignatureJson())
 
         findViewById<Button>(R.id.btn_save).setOnClickListener { save() }
         findViewById<Button>(R.id.btn_reset).setOnClickListener { reset() }
@@ -39,7 +39,7 @@ class SignatureActivity : AppCompatActivity() {
 
     private fun reset() {
         GroupStore.resetSignature(this)
-        etJson.setText(GroupStore.defaultSignatureJson(this))
+        etJson.setText(GroupStore.defaultSignatureJson())
         Toast.makeText(this, R.string.signature_saved, Toast.LENGTH_SHORT).show()
     }
 

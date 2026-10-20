@@ -11,6 +11,10 @@
     <string name="settings_kill_wechat_done">已强制停止微信</string>
     <string name="settings_kill_wechat_fail">未能提权强杀（需 root），已尝试后台方式；请手动结束微信</string>
     <string name="settings_about">关于</string>
+    <string name="settings_channel_warn">同步通道未就绪：/data/local/tmp 下的镜像文件不存在或不可写，在这里改的分组 / 设置不会同步到微信。</string>
+    <string name="settings_channel_fix">用 root 创建同步文件</string>
+    <string name="settings_channel_fixed">同步通道已就绪</string>
+    <string name="settings_channel_fix_fail">创建失败（需要 root 授权），也可以按 README 用 adb 手动创建</string>
     <string name="settings_display_title">显示偏好（微信内即时生效）</string>
     <string name="settings_badge_dot">未读角标用纯红点（不用数字）</string>
     <string name="settings_hide_empty">隐藏不在会话列表的空分组</string>

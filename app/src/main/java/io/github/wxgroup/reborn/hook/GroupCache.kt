@@ -60,7 +60,8 @@ internal fun ConversationGroupHook.detectAndRefresh(adapter: Any) {
         return
     }
     if (stamp == lastStamp) return
-    lastStamp = stamp
+    GroupStore.seedMirrorIfEmptyXposed()
+    lastStamp = GroupStore.groupsStamp()
     synchronized(groupCache) {
         groupCache.clear()
         cacheTs.clear()

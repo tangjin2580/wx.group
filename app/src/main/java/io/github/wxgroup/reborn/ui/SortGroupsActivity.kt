@@ -236,8 +236,7 @@ class SortGroupsActivity : AppCompatActivity() {
             finish()
             return
         }
-        order.forEachIndexed { i, g -> g.order = i + 1 }
-        GroupStore.putGroups(this, order)
+        GroupStore.applyOrder(this, order.map { it.id })
         Toast.makeText(this, "已保存分组顺序", Toast.LENGTH_SHORT).show()
         finish()
     }

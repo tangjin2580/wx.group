@@ -24,8 +24,16 @@ class MainHook : XposedModule() {
         private const val WECHAT_PACKAGE = "com.tencent.mm"
     }
 
+    private var processName: String? = null
+
+    override fun onModuleLoaded(param: XposedModuleInterface.ModuleLoadedParam) {
+        processName = param.processName
+    }
+
     override fun onPackageLoaded(param: XposedModuleInterface.PackageLoadedParam) {
         if (param.packageName != WECHAT_PACKAGE) return
+        // :push / :appbrand 等子进程没有会话列表，不挂
+        if (processName != null && processName != WECHAT_PACKAGE) return
 
         // 把框架接口交给薄封装，供 XposedBridge.hookMethod 使用
         XposedBridge.attach(this)

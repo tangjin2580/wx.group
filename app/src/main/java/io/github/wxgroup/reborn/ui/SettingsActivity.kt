@@ -70,6 +70,7 @@ class SettingsActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_kill_wechat).setOnClickListener {
             confirmKillWeChat()
         }
+        findViewById<Button>(R.id.btn_fix_channel).setOnClickListener { provisionChannel() }
         findViewById<Button>(R.id.btn_about).setOnClickListener {
             AlertDialog.Builder(this)
                 .setTitle(R.string.settings_about)
@@ -77,6 +78,37 @@ class SettingsActivity : AppCompatActivity() {
                 .setPositiveButton(android.R.string.ok, null)
                 .show()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshChannelState()
+    }
+
+    /** 镜像文件不存在时，App 里的改动到不了微信 —— 显式提示，而不是只在日志里失败 */
+    private fun refreshChannelState() {
+        val ready = GroupStore.mirrorsReady()
+        findViewById<android.view.View>(R.id.tv_channel_warn).visibility =
+            if (ready) android.view.View.GONE else android.view.View.VISIBLE
+        findViewById<android.view.View>(R.id.btn_fix_channel).visibility =
+            if (ready) android.view.View.GONE else android.view.View.VISIBLE
+    }
+
+    private fun provisionChannel() {
+        Thread {
+            val ok = GroupStore.provisionMirrorsWithRoot()
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                // putSettings 顺带发变更通知，微信收到后会用自己那份分组填上空镜像
+                if (ok) GroupStore.putSettings(this, collect())
+                refreshChannelState()
+                Toast.makeText(
+                    this,
+                    if (ok) R.string.settings_channel_fixed else R.string.settings_channel_fix_fail,
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }.start()
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -135,12 +167,22 @@ class SettingsActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle(R.string.settings_kill_wechat)
             .setMessage(R.string.settings_kill_wechat_msg)
-            .setPositiveButton(R.string.settings_kill_wechat_confirm) { _, _ -> forceStopWeChat() }
+            .setPositiveButton(R.string.settings_kill_wechat_confirm) { _, _ ->
+                // su 要等用户在 root 管理器里授权，放 UI 线程会直接 ANR
+                Thread {
+                    val killed = forceStopWeChat()
+                    runOnUiThread {
+                        if (isFinishing || isDestroyed) return@runOnUiThread
+                        val msg = if (killed) R.string.settings_kill_wechat_done else R.string.settings_kill_wechat_fail
+                        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                    }
+                }.start()
+            }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
-    private fun forceStopWeChat() {
+    private fun forceStopWeChat(): Boolean {
         val killedBySu = try {
             val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "am force-stop $WECHAT_PACKAGE"))
             p.outputStream.close()
@@ -156,8 +198,6 @@ class SettingsActivity : AppCompatActivity() {
             am?.killBackgroundProcesses(WECHAT_PACKAGE)
         } catch (_: Throwable) {
         }
-        val msg = if (killedBySu) getString(R.string.settings_kill_wechat_done)
-        else getString(R.string.settings_kill_wechat_fail)
-        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+        return killedBySu
     }
 }

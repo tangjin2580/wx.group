@@ -52,10 +52,11 @@ import java.lang.reflect.Field
         rvBaseClass = base
         log("RecyclerView 分支: 适配器=$wxName, 基类=${base.name}")
 
+        // WxRecyclerAdapter 是微信通用列表适配器（转发「选择聊天」等页面都用它），不能凭类名认定是会话列表
         rvConvAdapterNames = setOfNotNull(
             sig.resolveClassName("ConversationAdapterRv").takeIf { it != "ConversationAdapterRv" },
             "po5.u"
-        ).map { it.replace('/', '.') }.toSet()
+        ).map { it.replace('/', '.') }.filter { it != wx.name }.toSet()
         log("RecyclerView 分支: 会话适配器候选名 = $rvConvAdapterNames")
 
         hookRvDeclared(base, "getItemCount", 0, "RvItemCount")
@@ -104,7 +105,13 @@ import java.lang.reflect.Field
     }
 
     internal fun ConversationGroupHook.isRconversationAdapter(a: Any): Boolean {
+        // 会话列表已确认走 ListView 分支时，任何 RecyclerView 都不是它（转发页的会话选择列表也带 k4，会被误判）
+        if (legacyListView?.get() != null) return false
         rvDecision[a]?.let { return it }
+        if (rvHolderFactory(a) == null) {
+            rvDecision[a] = false
+            return false
+        }
         if (rvConvAdapterNames.contains(a.javaClass.name)) {
             rvDecision[a] = true
             return true
@@ -299,7 +306,7 @@ import java.lang.reflect.Field
         val vpos = (param.args[0] as? Int) ?: return
         val e = rvEntryAt(a, vpos)
         if (e?.type == TYPE_HEADER) {
-            param.result = (e.group?.id.hashCode() ?: 0).toLong() - 4_000_000_000L
+            param.result = e.group?.id.hashCode().toLong() - 4_000_000_000L
             return
         }
         val mapped = rvMapV2R(a, vpos)
@@ -368,10 +375,36 @@ import java.lang.reflect.Field
     }
 
     internal fun ConversationGroupHook.wrapHolder(a: Any, view: View): Any? = try {
-        XposedHelpers.callMethod(a, "B0", view)
+        rvHolderFactory(a)?.invoke(a, view)
     } catch (t: Throwable) {
         log("包装分组行 ViewHolder 失败: ${t.message}")
         null
+    }
+
+    /**
+     * 适配器上「View → ViewHolder」的工厂方法（8.0.78 叫 B0，8.0.79 叫 y0，按签名找）。
+     * 找不到就不能接管：onCreateViewHolder 返回 null 会让 RecyclerView 直接 NPE 崩掉微信。
+     */
+    internal fun ConversationGroupHook.rvHolderFactory(a: Any): java.lang.reflect.Method? {
+        val cls = a.javaClass
+        if (rvHolderFactoryCache.containsKey(cls)) return rvHolderFactoryCache[cls]
+        val holderType = rvBaseClass?.declaredMethods
+            ?.firstOrNull { it.name == "onCreateViewHolder" && it.parameterTypes.size == 2 }
+            ?.returnType
+        var found: java.lang.reflect.Method? = null
+        var c: Class<*>? = cls
+        while (found == null && c != null && c != Any::class.java) {
+            found = c.declaredMethods.firstOrNull { m ->
+                m.parameterTypes.size == 1 && m.parameterTypes[0] == View::class.java &&
+                    !java.lang.reflect.Modifier.isAbstract(m.modifiers) &&
+                    holderType != null && holderType.isAssignableFrom(m.returnType)
+            }
+            c = c.superclass
+        }
+        found?.isAccessible = true
+        rvHolderFactoryCache[cls] = found
+        if (found == null) log("RV: ${cls.name} 找不到 View→ViewHolder 工厂方法，不接管")
+        return found
     }
 
     /** 分组行 LayoutParams 必须是 RecyclerView.LayoutParams；parent 就是 RecyclerView 自己 */

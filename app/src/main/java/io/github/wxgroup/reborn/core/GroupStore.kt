@@ -9,18 +9,16 @@ import org.json.JSONObject
 /**
  * 分组数据与签名的客户端封装。
  *
- * 跨进程读取方案（LSPosed 模块读取「模块 App」自身数据给「微信」进程用的标准做法）：
- *   - 模块 App（设置界面）把数据与签名写入自己的 SharedPreferences（文件位于
- *     /data/data/io.github.wxgroup.reborn/shared_prefs/wxgroup.xml）；
- *   - 微信进程里的 Hook 通过 LSPosed 提供的 XSharedPreferences(MODULE_PKG, "wxgroup")
- *     读取——LSPosed 的 lspd 守护进程以提升的 SELinux 上下文直接读该文件，
- *     不受 Android 11+ 的包可见性（AppsFilter）与 app_data_file 跨应用 SELinux 限制影响。
- *   - 静态签名另有「内置 raw 资源」兜底：模块类与资源会被 LSPosed 载入微信进程，
- *     直接用模块 ClassLoader 读 res/raw/wechat_signatures.json，完全不经过任何 IPC，
- *     保证 Hook 一定能在微信里挂上（即便跨进程读取临时异常）。
+ * 跨进程通道：
+ *   - 模块 App 写自己的 SharedPreferences，并把分组/偏好镜像到 /data/local/tmp（666）；
+ *   - 微信进程读微信私有目录 files/chatgroup_groups.json 与该镜像，**整份取更新的那个**；
+ *   - ContentProvider 只做兜底（多数 ROM 被 AppsFilter 拦截）；
+ *   - 静态签名直接用模块 ClassLoader 读内置 res/raw/wechat_signatures.json，不经过 IPC。
  *
- * 写文件一律走 [atomicWriteText]（同目录 tmp + rename）：直接 writeText 时进程被杀
- * 会留下半截 JSON，分组会整个丢掉。
+ * 每个写入方都写**完整的分组表**，所以合并只能「整份取新」，不能按 id 取并集 ——
+ * 并集会让任意一侧删掉的分组被另一侧的旧文件带回来。
+ *
+ * 写文件一律走 [atomicWriteText]（能 rename 就原子写，目录不可写时退回覆盖写）。
  */
 object GroupStore {
 
@@ -30,6 +28,8 @@ object GroupStore {
     const val KEY_GROUPS = "groups"
     const val KEY_SIGNATURE = "signature"
     const val KEY_SETTINGS = "settings"
+    /** 上次与镜像同步（App 写出或导入）时镜像的 stamp；没变就说明没有新的外部改动 */
+    private const val KEY_MIRROR_STAMP = "mirror_stamp"
 
     /**
      * 跨进程可读缓存文件：/data/local/tmp/ 是 1777（world-writable）且 SELinux 对 untrusted_app 可读，
@@ -226,6 +226,8 @@ object GroupStore {
      * 以前五个写方法各自「读全文 → 改 JSON → 写回」，重复且容易漏掉镜像/通知。
      */
     private fun mutateGroups(ctx: Context, block: (MutableList<WxGroup>) -> Unit) {
+        // 先并入微信侧的最新改动：App 页面开着期间微信里可能刚加过成员/建过分组
+        importFromTmp(ctx)
         val list = parseGroups(prefs(ctx).getString(KEY_GROUPS, null)).toMutableList()
         block(list)
         val root = JSONObject(prefs(ctx).getString(KEY_GROUPS, null) ?: "{}")
@@ -242,30 +244,41 @@ object GroupStore {
         list.addAll(groups)
     }
 
-    fun putGroup(ctx: Context, group: WxGroup) = mutateGroups(ctx) { list ->
-        val i = list.indexOfFirst { it.id == group.id }
-        if (i >= 0) list[i] = group else list.add(group)
-    }
-
     fun removeGroup(ctx: Context, id: String) = mutateGroups(ctx) { list ->
         list.removeAll { it.id == id }
     }
 
+    /** 按 id 原地修改一个分组（改名 / 置顶 / 免打扰），只动传入的字段，不会用旧对象覆盖成员 */
+    fun updateGroup(ctx: Context, id: String, block: (WxGroup) -> Unit) = mutateGroups(ctx) { list ->
+        list.firstOrNull { it.id == id }?.let(block)
+    }
+
+    /** 收纳组是文件夹语义：加入一个分组时从其它分组摘掉（和微信侧 addTalkerToGroup 一致） */
     fun addMember(ctx: Context, groupId: String, username: String) = mutateGroups(ctx) { list ->
-        list.firstOrNull { it.id == groupId }?.members?.add(username)
+        val target = list.firstOrNull { it.id == groupId } ?: return@mutateGroups
+        list.forEach { if (it.id != groupId) it.members.remove(username) }
+        target.members.add(username)
+    }
+
+    /** 新建分组（可选直接收入一个会话），一次落盘 */
+    fun createGroup(ctx: Context, group: WxGroup, username: String?) = mutateGroups(ctx) { list ->
+        if (!username.isNullOrBlank()) {
+            list.forEach { it.members.remove(username) }
+            group.members.add(username)
+        }
+        list.add(group)
+    }
+
+    /** 只按 id 写回顺序（拖动排序页用），不替换整表，避免把排序期间别处新建的分组冲掉 */
+    fun applyOrder(ctx: Context, orderedIds: List<String>) = mutateGroups(ctx) { list ->
+        val rank = orderedIds.withIndex().associate { (i, id) -> id to i + 1 }
+        var next = orderedIds.size
+        list.forEach { g -> g.order = rank[g.id] ?: ++next }
     }
 
     fun removeMember(ctx: Context, groupId: String, username: String) = mutateGroups(ctx) { list ->
         list.firstOrNull { it.id == groupId }?.members?.remove(username)
     }
-
-    /** 返回 username 所属的所有分组（一个会话可同时属于多个分组） */
-    fun groupsOf(ctx: Context, username: String): List<WxGroup> =
-        getGroups(ctx).filter { username in it.members }
-
-    /** 分组列表（已按 置顶 > 名称 排序），供界面展示 */
-    fun sortedGroups(ctx: Context): List<WxGroup> =
-        getGroups(ctx).sortedWith(compareBy({ !it.pinned }, { it.name }))
 
     // ===== 签名（模块 App 侧） =====
 
@@ -286,7 +299,7 @@ object GroupStore {
     }
 
     /** 读取默认签名 JSON 文本（来自模块 APK 的 raw 资源），供 UI 展示 */
-    fun defaultSignatureJson(ctx: Context? = null): String? = embeddedSignatureJson()
+    fun defaultSignatureJson(): String? = embeddedSignatureJson()
 
     // ===== Hook 侧（运行在微信进程） =====
 
@@ -317,26 +330,23 @@ object GroupStore {
      *   2. 模块 App 镜像 /data/local/tmp/wxgroup_reborn_groups.json
      *   3. ContentProvider（AppsFilter 通常已封，仅兜底）
      *
-     * 合并按 id 取并集；同 id 时**以「更晚修改的那份文件」为准** ——
-     * 早期实现无条件「镜像优先」，模块 App 里一份陈旧镜像会盖掉微信侧刚改的数据（丢过成员）。
+     * 两份文件**整份取更晚修改的那个**（每个写入方都写完整表）。早期按 id 取并集，
+     * 结果是任一侧删掉的分组都会被另一侧的旧文件带回来。
      */
-    fun getGroupsXposed(context: Context?): List<WxGroup> {
+    fun getGroupsXposed(context: Context?): List<WxGroup> =
+        readGroupsXposed()
+            ?: providerQuery(context, "groups")?.let { parseGroupsOrNull(it) }
+            ?: emptyList()
+
+    /** 两份文件里取最后修改的那份（整份），都没有可用内容时返回 null */
+    private fun readGroupsXposed(): List<WxGroup>? {
         val privateFile = firstExisting(CHATGROUP_FILES)
         val tmpFile = java.io.File(TMP_GROUPS).takeIf { it.exists() }
-        val out = LinkedHashMap<String, WxGroup>()
         val priv = readGroupsFile(privateFile)
         val tmp = readGroupsFile(tmpFile)
-        if (priv != null) priv.forEach { out[it.id] = it }
-        if (tmp != null) {
-            val tmpNewer = tmpFile != null && tmpFile.lastModified() >= (privateFile?.lastModified() ?: 0L)
-            for (g in tmp) {
-                if (tmpNewer || out[g.id] == null) out[g.id] = g
-            }
-        }
-        if (out.isEmpty()) {
-            providerQuery(context, "groups")?.let { parseGroups(it) }?.forEach { out[it.id] = it }
-        }
-        return out.values.toList()
+        if (priv == null || privateFile == null) return tmp
+        if (tmp == null || tmpFile == null) return priv
+        return if (tmpFile.lastModified() >= privateFile.lastModified()) tmp else priv
     }
 
     /**
@@ -344,8 +354,7 @@ object GroupStore {
      * 只在明确需要时调用（启动一次、微信侧保存后），**不要**放进读路径。
      */
     fun reconcileXposed(): Int {
-        val groups = getGroupsXposed(null)
-        if (groups.isEmpty()) return 0
+        val groups = readGroupsXposed() ?: return 0
         var changed = 0
         // ⚠️ 必须写完整字段（order/icon/pinned/muted）。早期版本只写 id/name/members，
         // 微信侧每次对齐都会把用户排好的顺序/图标剥掉 —— 一旦私有文件比镜像新，
@@ -370,41 +379,36 @@ object GroupStore {
     }
 
     /**
-     * 模块 App 侧：把镜像里（微信进程写入的）分组并回本地存储。
-     * 模块 App 读不到微信私有目录，所以微信进程会把微信侧建的分组同步进
-     * /data/local/tmp 镜像，App 启动时在这里并回来 —— 两边的分组列表就一致了。
+     * 模块 App 侧：用镜像整表替换本地分组。
      *
-     * 同 id 时**以镜像为准**（覆盖本地）：镜像由微信进程写，是会话列表真正在用的那份数据；
-     * 只按 id 判存在、保留本地旧值的话，App 一启动就会用旧成员覆盖镜像 → 丢数据。
+     * 镜像是两边共同可见、且每次都写完整表的那份，所以它就是当前真相：
+     * 微信里删掉的分组必须在这里也消失，按 id 合并会把它留在本地，下次 App 一保存又写回去。
+     * 镜像为空文件 / 非法 JSON（例如刚 touch 出来）时不导入，保留本地。
      */
     fun importFromTmp(ctx: Context) {
         try {
             val f = java.io.File(TMP_GROUPS)
             if (!f.exists()) return
-            val fromTmp = parseGroups(f.readText())
-            if (fromTmp.isEmpty()) return
-            val byId = LinkedHashMap<String, WxGroup>()
+            // 镜像自上次同步后没动过 → 本地才是最新的（例如上次写镜像失败），不能被旧镜像回滚
+            val stamp = fileStamp(f)
+            if (stamp == prefs(ctx).getLong(KEY_MIRROR_STAMP, Long.MIN_VALUE)) return
+            val fromTmp = parseGroupsOrNull(f.readText()) ?: return
+            prefs(ctx).edit().putLong(KEY_MIRROR_STAMP, stamp).apply()
+            val local = getGroups(ctx)
+            if (sameGroups(local, fromTmp)) return
             val root = JSONObject(prefs(ctx).getString(KEY_GROUPS, null) ?: "{}")
-            val arr = root.optJSONArray("groups") ?: JSONArray()
-            for (i in 0 until arr.length()) {
-                val g = parseGroups(JSONArray().put(arr.getJSONObject(i)).toString()).firstOrNull() ?: continue
-                byId[g.id] = g
-            }
-            var changed = false
-            for (g in fromTmp) {
-                val old = byId[g.id]
-                if (old == null || !sameGroup(old, g)) changed = true
-                byId[g.id] = g // 镜像优先
-            }
-            if (!changed) return
-            val out = JSONArray()
-            byId.values.forEach { out.put(it.toJson()) }
-            root.put("groups", out)
+            root.put("groups", JSONArray().also { a -> fromTmp.forEach { a.put(it.toJson()) } })
             writePref(ctx, KEY_GROUPS, root.toString())
-            Log.i(TAG, "从镜像并回 ${fromTmp.size} 个分组")
+            Log.i(TAG, "已从镜像同步 ${fromTmp.size} 个分组")
         } catch (t: Throwable) {
             Log.e(TAG, "从镜像导入分组失败: ${t.message}")
         }
+    }
+
+    private fun sameGroups(a: List<WxGroup>, b: List<WxGroup>): Boolean {
+        if (a.size != b.size) return false
+        val byId = b.associateBy { it.id }
+        return a.all { g -> byId[g.id]?.let { sameGroup(g, it) } == true }
     }
 
     /** 两个分组除 id 外是否完全一致（成员按集合比，忽略顺序） */
@@ -415,7 +419,7 @@ object GroupStore {
     private fun readGroupsFile(f: java.io.File?): List<WxGroup>? {
         if (f == null) return null
         return try {
-            parseGroups(f.readText())
+            parseGroupsOrNull(f.readText())
         } catch (t: Throwable) {
             Log.e(TAG, "读分组文件失败 ${f.path}: ${t.message}")
             null
@@ -430,10 +434,6 @@ object GroupStore {
         return null
     }
 
-    /** 微信进程查询某 username 所属分组（带调用方短缓存由 Hook 负责） */
-    fun groupsOfXposed(context: Context?, username: String): List<WxGroup> =
-        getGroupsXposed(context).filter { username in it.members }
-
     /**
      * 镜像文件的「变更戳」（最后修改时间 + 长度）。微信进程用它检测模块 App 是否改过分组，
      * 变了就主动 notifyDataSetChanged 刷新会话列表——否则用户改完分组要重启微信才看得到效果。
@@ -442,7 +442,7 @@ object GroupStore {
         var s = -1L
         for (p in listOf(TMP_GROUPS) + CHATGROUP_FILES) {
             val f = java.io.File(p)
-            if (f.exists()) s = maxOf(s, f.lastModified() * 1_000_000L + f.length())
+            if (f.exists()) s = maxOf(s, fileStamp(f))
         }
         s
     } catch (t: Throwable) {
@@ -491,13 +491,46 @@ object GroupStore {
         }
     }
 
+    private fun fileStamp(f: java.io.File): Long = f.lastModified() * 1_000_000L + f.length()
+
+    /**
+     * 微信侧：镜像刚被 root 创建出来还是空文件时，用微信私有目录那份填上。
+     * 否则模块 App 首次保存会用它自己（可能很旧）的整表成为「最新」，盖掉微信里建的分组。
+     */
+    fun seedMirrorIfEmptyXposed() {
+        val tmp = java.io.File(TMP_GROUPS)
+        if (!tmp.exists() || readGroupsFile(tmp) != null) return
+        if (readGroupsFile(firstExisting(CHATGROUP_FILES)) == null) return
+        reconcileXposed()
+    }
+
+    /**
+     * 跨进程镜像是否可写。模块 App 在 SELinux 下建不了 /data/local/tmp 里的新文件，
+     * 只能覆盖已存在的 666 文件，所以首次需要 root 预创建（见 [provisionMirrorsWithRoot]）。
+     */
+    fun mirrorsReady(): Boolean =
+        listOf(TMP_GROUPS, TMP_SETTINGS).all { java.io.File(it).let { f -> f.exists() && f.canWrite() } }
+
+    /** 用 su 预创建镜像文件并设为 666。会阻塞（等待 root 授权），必须在后台线程调用 */
+    fun provisionMirrorsWithRoot(): Boolean = try {
+        val cmd = listOf(TMP_GROUPS, TMP_SETTINGS).joinToString(" && ") { "touch $it && chmod 666 $it" }
+        val p = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
+        p.outputStream.close()
+        p.waitFor() == 0
+    } catch (t: Throwable) {
+        Log.e(TAG, "root 创建镜像文件失败: ${t.message}")
+        false
+    }
+
     /** 把当前分组镜像到 /data/local/tmp，供微信进程读取（微信已验证可读该目录） */
     private fun mirrorGroupsToTmp(ctx: Context) {
         try {
             val json = prefs(ctx).getString(KEY_GROUPS, null)
                 ?: JSONObject().put("groups", JSONArray()).toString()
-            if (atomicWriteText(java.io.File(TMP_GROUPS), json)) {
+            val f = java.io.File(TMP_GROUPS)
+            if (atomicWriteText(f, json)) {
                 makeWorldReadable(TMP_GROUPS)
+                prefs(ctx).edit().putLong(KEY_MIRROR_STAMP, fileStamp(f)).apply()
                 Log.i(TAG, "镜像分组到 /data/local/tmp 成功 (${json.length}字符)")
             } else {
                 Log.e(TAG, "镜像分组到 /data/local/tmp 失败")
@@ -594,8 +627,11 @@ object GroupStore {
      *   2. 微信私有目录（chatgroup_groups.json）：裸数组 [{id,name,members:[...]}]  ← 主要读写目标
      *   3. 更早/手写：{"医保":["xxx@chatroom", ...], "客户":[...]}（名称 → 成员数组）
      */
-    private fun parseGroups(str: String?): List<WxGroup> {
-        if (str.isNullOrBlank()) return emptyList()
+    private fun parseGroups(str: String?): List<WxGroup> = parseGroupsOrNull(str) ?: emptyList()
+
+    /** 空串 / 非法 JSON 返回 null，用来区分「没有数据」和「合法的空分组表」 */
+    private fun parseGroupsOrNull(str: String?): List<WxGroup>? {
+        if (str.isNullOrBlank()) return null
         val trimmed = str.trim()
         return try {
             if (trimmed.startsWith("[")) {
@@ -607,7 +643,7 @@ object GroupStore {
             }
         } catch (t: Throwable) {
             Log.e(TAG, "分组 JSON 解析失败: ${t.message}")
-            emptyList()
+            null
         }
     }
 
@@ -632,7 +668,7 @@ object GroupStore {
         while (keys.hasNext()) {
             val name = keys.next()
             val arr = root.optJSONArray(name) ?: continue
-            legacyNameMap(name, arr)?.let { out.add(it) }
+            out.add(legacyNameMap(name, arr))
         }
         return out
     }

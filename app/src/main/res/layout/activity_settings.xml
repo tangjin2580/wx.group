@@ -95,6 +95,23 @@
             android:layout_marginTop="8dp"
             android:text="@string/settings_import" />
 
+        <TextView
+            android:id="@+id/tv_channel_warn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/settings_channel_warn"
+            android:textColor="#E53935"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/btn_fix_channel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/settings_channel_fix"
+            android:visibility="gone" />
+
         <Button
             android:id="@+id/btn_kill_wechat"
             android:layout_width="match_parent"

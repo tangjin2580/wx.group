@@ -239,6 +239,7 @@ class ConversationGroupHook {
     internal var rvSeenLogged = 0
     internal val rvSeen = mutableSetOf<String>()
     internal val talkerFieldCache = mutableMapOf<String, Field?>()
+    internal val rvHolderFactoryCache = HashMap<Class<*>, java.lang.reflect.Method?>()
 
     // ==================================================================================
     // 入口
@@ -280,6 +281,7 @@ class ConversationGroupHook {
                 object : android.database.ContentObserver(mainHandler) {
                     override fun onChange(selfChange: Boolean) {
                         try {
+                            GroupStore.seedMirrorIfEmptyXposed()
                             synchronized(groupCache) {
                                 groupCache.clear()
                                 cacheTs.clear()

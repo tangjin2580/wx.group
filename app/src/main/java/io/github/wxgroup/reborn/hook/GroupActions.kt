@@ -328,13 +328,13 @@ internal fun ConversationGroupHook.showGroupChooser(act: android.app.Activity, t
         fun refilter(q: String) {
             query = q.trim()
             val filtered: List<Any> = if (query.isEmpty()) {
-                groups.map { it as Any } + "NEW"
+                groups + "NEW"
             } else {
                 // 名称或成员 username 命中都算（群名不直观时可以直接搜 wxid/群号）
                 val hit = groups.filter { g ->
                     g.name.contains(query, true) || g.members.any { it.contains(query, true) }
                 }
-                hit.map { it as Any } + "NEW"
+                hit + "NEW"
             }
             shown = filtered
             notifyDataSetChanged()

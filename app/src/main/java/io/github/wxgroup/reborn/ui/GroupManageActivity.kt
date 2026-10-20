@@ -106,8 +106,7 @@ class GroupManageActivity : AppCompatActivity() {
                     // GroupStore.orderKey() 就是靠这个从 id 推出创建顺序的
                     val id = PREFIX + System.currentTimeMillis()
                     val nextOrder = (groups.maxOfOrNull { it.order } ?: 0) + 1
-                    GroupStore.putGroup(this, WxGroup(id, name, order = nextOrder))
-                    username?.let { GroupStore.addMember(this, id, it) }
+                    GroupStore.createGroup(this, WxGroup(id, name, order = nextOrder), username)
                     if (username != null) {
                         Toast.makeText(this, "已新建「$name」并加入", Toast.LENGTH_SHORT).show()
                         finish()
@@ -131,8 +130,8 @@ class GroupManageActivity : AppCompatActivity() {
             .setItems(actions) { _, which ->
                 when (which) {
                     0 -> renameGroup(group)
-                    1 -> { group.pinned = !group.pinned; GroupStore.putGroup(this, group); refresh() }
-                    2 -> { group.muted = !group.muted; GroupStore.putGroup(this, group); refresh() }
+                    1 -> { GroupStore.updateGroup(this, group.id) { it.pinned = !it.pinned }; refresh() }
+                    2 -> { GroupStore.updateGroup(this, group.id) { it.muted = !it.muted }; refresh() }
                     3 -> manageMembers(group)
                     4 -> AlertDialog.Builder(this)
                         .setTitle(R.string.group_delete)
@@ -163,7 +162,7 @@ class GroupManageActivity : AppCompatActivity() {
             .setItems(members) { _, which ->
                 GroupStore.removeMember(this, group.id, members[which])
                 refresh()
-                manageMembers(group)
+                groups.firstOrNull { it.id == group.id }?.let { manageMembers(it) }
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
@@ -176,7 +175,7 @@ class GroupManageActivity : AppCompatActivity() {
             .setView(input)
             .setPositiveButton(android.R.string.ok) { _, _ ->
                 val name = input.text.toString().trim()
-                if (name.isNotEmpty()) { group.name = name; GroupStore.putGroup(this, group); refresh() }
+                if (name.isNotEmpty()) { GroupStore.updateGroup(this, group.id) { it.name = name }; refresh() }
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()

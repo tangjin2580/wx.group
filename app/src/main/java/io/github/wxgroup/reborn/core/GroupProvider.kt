@@ -18,7 +18,7 @@ import org.json.JSONObject
  * android:exported="true"，让该 Provider 对所有包可见、可解析，从而绕过 AppsFilter。
  * Provider 运行在模块 App 进程，天然可读写本 App 私有数据，再由 Provider 协议回传微信。
  *
- * 注：Xposed api:82 的 ContentProvider 桩缺少 call() 重载，故用 query() 通道返回 JSON。
+ * 只回应微信与本模块自己的查询（见 callerAllowed）。
  */
 class GroupProvider : ContentProvider() {
 
@@ -27,6 +27,7 @@ class GroupProvider : ContentProvider() {
     private val PATH_GROUPS = "groups"
     private val PATH_SIGNATURE = "signature"
     private val COL_DATA = "data"
+    private val WECHAT_PKG = "com.tencent.mm"
 
     override fun onCreate(): Boolean = true
 
@@ -38,6 +39,8 @@ class GroupProvider : ContentProvider() {
         sortOrder: String?
     ): Cursor? {
         val ctx = context ?: return null
+        // exported 是为了让微信能查；其它 App 一律拒绝，分组里全是联系人 / 群的 wxid
+        if (!callerAllowed()) return null
         val data = try {
             when (uri.lastPathSegment) {
                 PATH_GROUPS -> ctx.getSharedPreferences(GroupStore.PREFS, android.content.Context.MODE_PRIVATE)
@@ -54,6 +57,11 @@ class GroupProvider : ContentProvider() {
         val c = MatrixCursor(arrayOf(COL_DATA))
         c.addRow(arrayOf(data))
         return c
+    }
+
+    private fun callerAllowed(): Boolean {
+        val pkg = callingPackage ?: return false
+        return pkg == WECHAT_PKG || pkg == context?.packageName
     }
 
     // 以下为 ContentProvider 必须实现的空方法（本模块仅用 query 通道）
