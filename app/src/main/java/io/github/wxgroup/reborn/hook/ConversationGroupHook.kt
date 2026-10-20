@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.TypedValue
+import android.view.View
 import io.github.wxgroup.reborn.core.GroupStore
 import io.github.wxgroup.reborn.core.WeChatSignatures
 import io.github.wxgroup.reborn.core.WxGroup
@@ -146,6 +147,15 @@ class ConversationGroupHook {
     internal var containerFieldOwner: Class<*>? = null
 
     /**
+     * 微信「真实会话行」View 的 tag 类型（8.0.78 是 jo5.s）。
+     *
+     * 运行时从真实行上取一次，用来判断某个 View 是不是**这一轮模型**的行：
+     * 模型刚切换（进出二级页面）时 ListView 可能还留着旧子 View，标签为 null，
+     * 交给微信处理会按会话行结构 findViewById 拿到 null → NPE 闪退。
+     */
+    internal var hostRowTagClass: Class<*>? = null
+
+    /**
      * 未读快照：username → 未读数。
      *
      * 组行每渲染一次都要「组内成员未读之和」，早期实现是每渲染一个组行就把整个会话列表
@@ -161,6 +171,31 @@ class ConversationGroupHook {
 
     /** 列表不可见时的连续空转次数（用于退避停轮询，省电） */
     internal var pollIdle = 0
+
+    // ===== 微信内拖动排序（不跳模块 App）=====
+    /** 是否处于「拖动排序」模式：开启后列表触摸由 ReorderInPlace 接管 */
+    internal var reorderMode = false
+    /** 当前被拖动的分组 id / 在原分组顺序里的下标 */
+    internal var dragGroupId: String? = null
+    internal var dragFromIndex = -1
+    /** 拖动落点对应的目标下标（分组顺序里的位置） */
+    internal var dragTargetIndex = -1
+    /** 手指按下点、拖动视图的相对偏移 */
+    internal var dragDownY = 0f
+    internal var dragOffsetY = 0f
+    internal var dragging = false
+    /** 悬浮的行视图与绿色插入指示线（都挂在 ListView 的 overlay 上） */
+    internal var dragFloating: View? = null
+    internal var dragIndicator: View? = null
+    /** 被拖行原视图（拖动期间临时变淡） */
+    internal var dragSourceRow: View? = null
+    /** 被拖行的高度、落点槽位的 Y（视口坐标）、最近一次触摸 Y（自动滚动用） */
+    internal var dragRowHeight = 0
+    internal var dragSlotTop = -1f
+    internal var dragLastTouchY = 0f
+    /** 拖到列表上下边缘时持续滚动的循环任务 */
+    internal var dragAutoScroll: Runnable? = null
+
     internal var legacyCountLogged = 0
     internal var legacyRenderLogged = 0
     internal var legacyGuardLogged = 0
@@ -391,6 +426,7 @@ class ConversationGroupHook {
         installLongClickListenerWrapper()
         installTouchDownProbe()
         installBackKeyHook()
+        installReorderTouchHook()
     }
 
     // ==================================================================================

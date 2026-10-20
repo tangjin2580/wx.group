@@ -62,7 +62,11 @@ internal fun ConversationGroupHook.folderGroupOf(view: View?, parent: Any?, posi
         return sortedGroups().firstOrNull { it.id == gid }
     }
     // tag 是微信自己的行持有者（jo5.s）→ 铁定是真实会话行，直接放行
-    if (tag != null) return null
+    if (tag != null) {
+        // 记下「真实会话行」的持有者类型，供 canForwardToWeChat 判断 view 是否过期
+        hostRowTagClass = tag.javaClass
+        return null
+    }
     // 只有在 View 压根没有 tag 时，才退回到「按下探测」/位置判断
     if (probeFresh()) {
         val gid = downGroupId ?: return null
@@ -91,6 +95,53 @@ internal fun ConversationGroupHook.truePosition(parent: Any?, view: View?, fallb
     if (p >= 0 && p < lv.count) return p
     if (probeFresh()) return downPos
     return fallback
+}
+
+/**
+ * 这次点击/长按能不能**交回微信**处理？
+ *
+ * ── 为什么需要这个判断（真实闪退）──
+ * 点进分组时虚拟模型从 17 行缩到 4 行，ListView 里可能还留着上一轮布局的旧子 View
+ * （或者在列表末尾的 footer / 正在回收的行）。这种 View 上的 `tag` 是 null，
+ * 但 `position` 仍在旧范围内，于是我们把它当普通会话行转发给微信：
+ *
+ *     java.lang.NullPointerException: Attempt to invoke virtual method
+ *     'java.lang.CharSequence com.tencent.mm.ui.base.NoMeasuredTextView.getText()'
+ *     on a null object reference
+ *       at com.tencent.mm.ui.conversation.x3.onItemLongClick
+ *       at io.github.wxgroup.reborn.hook.OurItemLongClickListener.onItemLongClick
+ *
+ * 微信的长按处理器直接拿 View 当会话行去 findViewById 子控件，拿到 null 就崩。
+ * 这里做一次「视图 ↔ 模型」的一致性校验：对不上就**我们吃掉**这次事件，
+ * 宁可这次点击无效，也绝不能把微信弄崩。
+ */
+internal fun ConversationGroupHook.canForwardToWeChat(parent: Any?, view: View?, position: Int): Boolean {
+    if (view == null) return false
+    val tag = view.tag
+    // 收纳组行永远不交给微信
+    if (tag is FolderHolder) return false
+
+    val lv = parent as? android.widget.ListView ?: return true
+    val hv = headerCount(lv)
+
+    // ListView 自己的 header / footer（位置在虚拟条目之外）：微信自己认账，放行
+    if (position < hv) return true
+    // 超出当前适配器范围 = 模型刚缩小、这一行已经不存在了
+    if (position >= lv.count) return false
+
+    // View 必须真的是 ListView 当前的子 View（旧布局残留的子 View 已被 detach）
+    if (lv.indexOfChild(view) < 0) return false
+
+    val idx = position - hv
+    val e = legacyModel?.entries?.getOrNull(idx) ?: return false
+    if (e.type != TYPE_REAL || e.realPos < 0) return false
+
+    // 真实会话行的 tag 是微信自己的行持有者；如果这一轮已经见过持有者类型，
+    // tag 为 null 或类型不符就说明是过期 / 异型行，交回去必崩。
+    val expect = hostRowTagClass
+    if (expect != null && !expect.isInstance(tag)) return false
+
+    return true
 }
 
 /**

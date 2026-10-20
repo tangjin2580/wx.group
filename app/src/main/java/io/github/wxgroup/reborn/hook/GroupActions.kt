@@ -21,6 +21,10 @@ import io.github.wxgroup.reborn.xp.XposedHelpers
  * 「拖动排序…」会打开模块的排序页（微信的标签排序也是一个独立的排序页）。
  */
 internal fun ConversationGroupHook.handleHeaderLongPress(view: View?, group: WxGroup): Boolean {
+    // 排序模式下长按不弹菜单（此时的按压/移动是在拖动行）。
+    // 放在函数体里而不是只挡某个入口：长按有 performLongPress 和
+    // OnItemLongClickListener 包装两条路径，任何一条漏挡都会在拖动时弹菜单。
+    if (reorderMode) return true
     val now = android.os.SystemClock.uptimeMillis()
     if (lastLongGid == group.id && now - lastLongAt < 500L) return true
     lastLongGid = group.id
@@ -38,7 +42,7 @@ internal fun ConversationGroupHook.handleHeaderLongPress(view: View?, group: WxG
             return true
         }
     log("收纳组长按: 打开分组操作菜单「${group.name}」")
-    val items = arrayOf(
+    val items = listOf(
         "添加成员…",
         "拖动排序…",
         "重命名",
@@ -47,13 +51,18 @@ internal fun ConversationGroupHook.handleHeaderLongPress(view: View?, group: WxG
         "删除分组"
     )
     try {
-        android.app.AlertDialog.Builder(act)
-            .setTitle("分组「${group.name}」")
-            .setItems(items) { _, which ->
+        // 微信风格底部动作面板（系统 AlertDialog 的字体/圆角/行高和微信不一致，一眼出戏）
+        showWxActionSheet(
+            act = act,
+            title = "分组「${group.name}」",
+            items = items,
+            destructiveIndex = items.lastIndex,
+            onPick = { which ->
                 try {
                     when (which) {
                         0 -> showBatchMembers(act, group.id)
-                        1 -> launchGroupSorter(act)
+                        // 直接在微信会话列表里拖动排序，不再跳模块 App
+                        1 -> enterReorderMode()
                         2 -> showRenameGroupDialog(act, group.id)
                         3 -> showIconPicker(act, group.id)
                         4 -> confirmClearMembers(act, group.id)
@@ -63,8 +72,7 @@ internal fun ConversationGroupHook.handleHeaderLongPress(view: View?, group: WxG
                     log("分组操作失败: ${t.javaClass.simpleName}: ${t.message}")
                 }
             }
-            .setNegativeButton("取消", null)
-            .show()
+        )
     } catch (t: Throwable) {
         log("打开分组操作菜单失败: ${t.javaClass.simpleName}: ${t.message}")
     }

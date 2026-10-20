@@ -185,6 +185,12 @@ private class OurItemClickListener(
                                 "viewTag=${view?.tag?.javaClass?.simpleName}"
                     )
                 }
+                // 模型刚切换（进出二级页面）时 ListView 可能还留着旧子 View，
+                // 这时位置/视图对不上，交给微信会按会话行结构 findViewById 拿到 null → 闪退。
+                if (!host.canForwardToWeChat(parent, view, p)) {
+                    host.log("点击未放行: position=$p 不在当前模型内（过期子行）")
+                    return
+                }
             }
         } catch (t: Throwable) {
             host.log("点击包装异常: ${t.javaClass.simpleName}: ${t.message}")
@@ -243,6 +249,12 @@ private class OurItemLongClickListener(
                     host.log("纠正列表长按位置: 微信报 $position → 实际 $np")
                     p = np
                 }
+                // 同上：过期子行不能交给微信的长按处理器（它会 findViewById 自己的
+                // 会话行子控件，拿到 null 直接 NPE）。宁可不弹菜单，也不能闪退。
+                if (!host.canForwardToWeChat(parent, view, p)) {
+                    host.log("长按未放行: position=$p 不在当前模型内（过期子行）")
+                    return true
+                }
             }
         } catch (t: Throwable) {
             host.log("长按包装异常: ${t.javaClass.simpleName}: ${t.message}")
@@ -260,6 +272,11 @@ internal fun ConversationGroupHook.installItemLongPressInterceptor() {
                     try {
                         val parent = param.thisObject
                         if (!isOurListView(parent)) return
+                        // 排序模式下长按不弹菜单（此时的按压/移动是在拖动）
+                        if (reorderMode) {
+                            param.result = true
+                            return
+                        }
                         correctTapArgs(param)
                         val pos = param.args.getOrNull(1) as? Int ?: return
                         val v = param.args.getOrNull(0) as? View
@@ -286,6 +303,8 @@ internal fun ConversationGroupHook.installItemLongPressInterceptor() {
  * 两个入口（performItemClick 拦截 + 监听器包装）都走这里，300ms 内同一分组只处理一次。
  */
 internal fun ConversationGroupHook.handleHeaderTap(gid: String) {
+    // 排序模式下点击由 ReorderInPlace 的触摸层接管，这里不响应
+    if (reorderMode) return
     val now = android.os.SystemClock.uptimeMillis()
     val quickReTap = lastTapGid == gid && now - lastTapAt < 350L
     lastTapGid = gid
@@ -406,6 +425,15 @@ internal fun ConversationGroupHook.installBackKeyHook() {
             android.view.KeyEvent::class.java,
             object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
+                    // 拖动排序模式优先：返回键先退出排序模式，不退出微信
+                    if (reorderMode) {
+                        if (mainActivity?.get() !== param.thisObject) return
+                        val ev0 = param.args.getOrNull(0) as? android.view.KeyEvent ?: return
+                        if (ev0.keyCode != android.view.KeyEvent.KEYCODE_BACK) return
+                        if (ev0.action == android.view.KeyEvent.ACTION_UP) exitReorderMode()
+                        param.result = true
+                        return
+                    }
                     if (openGroupId == null) return
                     if (mainActivity?.get() !== param.thisObject) return
                     val ev = param.args.getOrNull(0) as? android.view.KeyEvent ?: return
@@ -429,6 +457,12 @@ internal fun ConversationGroupHook.installBackKeyHook() {
             Boolean::class.javaPrimitiveType,
             object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (reorderMode) {
+                        if (mainActivity?.get() !== param.thisObject) return
+                        exitReorderMode()
+                        param.result = true
+                        return
+                    }
                     if (openGroupId == null) return
                     if (mainActivity?.get() !== param.thisObject) return
                     if (!groupPageShown()) return
@@ -445,6 +479,13 @@ internal fun ConversationGroupHook.installBackKeyHook() {
             android.app.Activity::class.java, "onBackPressed",
             object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (reorderMode) {
+                        if (mainActivity?.get() !== param.thisObject) return
+                        log("onBackPressed: 退出拖动排序模式")
+                        exitReorderMode()
+                        param.result = null
+                        return
+                    }
                     if (openGroupId == null) return
                     if (mainActivity?.get() !== param.thisObject) return
                     if (!groupPageShown()) return
@@ -480,6 +521,17 @@ internal fun ConversationGroupHook.installConcreteBackHook(activity: android.app
             android.view.KeyEvent::class.java,
             object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (reorderMode) {
+                        if (mainActivity?.get() !== param.thisObject) return
+                        val ev0 = param.args.getOrNull(0) as? android.view.KeyEvent ?: return
+                        if (ev0.keyCode != android.view.KeyEvent.KEYCODE_BACK) return
+                        if (ev0.action == android.view.KeyEvent.ACTION_UP) {
+                            log("返回键(子类): 退出拖动排序模式")
+                            exitReorderMode()
+                        }
+                        param.result = true
+                        return
+                    }
                     if (openGroupId == null) return
                     if (mainActivity?.get() !== param.thisObject) return
                     val ev = param.args.getOrNull(0) as? android.view.KeyEvent ?: return

@@ -71,5 +71,6 @@ internal class FolderHolder(
     val sub: TextView,
     val arrow: TextView,
     val unread: TextView,    // 未读角标（红点/数字）
+    val back: TextView,      // 打开态左侧返回箭头（常态 GONE）
     var groupId: String? = null
 )
