@@ -189,7 +189,9 @@ private fun ConversationGroupHook.beginDrag(lv: ListView, group: WxGroup) {
     // 从被拖行原来的位置开始，视觉上就是「这一行被原地拎起」
     floating.y = (source?.top ?: 0).toFloat()
 
-    // 插入指示线（微信绿）：先加，保证画在悬浮行下面
+    // 插入指示线（微信绿）：先加，保证画在悬浮行下面。
+    // 它**跟着悬浮行走**（贴在行下沿），不吸附到落点槽位 —— 吸附会让人以为
+    // 线指的位置和手指不在一个地方。
     val indicator = View(ctx).apply {
         background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
@@ -197,9 +199,9 @@ private fun ConversationGroupHook.beginDrag(lv: ListView, group: WxGroup) {
             setColor(0xFF07C160.toInt())
         }
         alpha = 0f
-        visibility = View.INVISIBLE
+        visibility = View.VISIBLE
     }
-    indicator.layout(0, 0, lv.width, dp(ctx, 3))
+    indicator.layout(dp(ctx, 16), 0, lv.width - dp(ctx, 16), dp(ctx, 3))
     lv.overlay.add(indicator)
     lv.overlay.add(floating)
     dragIndicator = indicator
@@ -208,6 +210,9 @@ private fun ConversationGroupHook.beginDrag(lv: ListView, group: WxGroup) {
     // 被拖行本体隐藏：让让位的其它行能「盖」过它的位置，而不是和它叠在一起
     source?.animate()?.alpha(0f)?.setDuration(120L)?.start()
     floating.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(120L).start()
+    indicator.alpha = 0f
+    indicator.y = floating.y + rowH
+    indicator.animate().alpha(0.9f).setDuration(120L).start()
     lv.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
     log("开始拖动: ${group.name} (from=$dragFromIndex)")
 }
@@ -217,6 +222,12 @@ private fun ConversationGroupHook.moveDrag(lv: ListView, y: Float) {
     val h = floating.height.takeIf { it > 0 } ?: dragRowHeight.takeIf { it > 0 } ?: dp(lv.context, 64)
     val top = (y - dragOffsetY).coerceIn(0f, (lv.height - h).coerceAtLeast(0).toFloat())
     floating.y = top
+
+    // 绿线贴在悬浮行下沿，完全跟着手指走（不做吸附、不做动画），
+    // 视觉上就是这一行的「落影」，不会再出现线在别处的割裂感。
+    dragIndicator?.let { line ->
+        line.y = (top + h).coerceAtMost((lv.height - line.height).coerceAtLeast(0).toFloat())
+    }
 
     val spans = visibleHeaders(lv)
     if (spans.isEmpty()) return
@@ -228,7 +239,6 @@ private fun ConversationGroupHook.moveDrag(lv: ListView, y: Float) {
         g.id != dragged.id && g.pinned == dragged.pinned
     }
     if (candidates.isEmpty()) {
-        dragIndicator?.animate()?.alpha(0f)?.setDuration(80L)?.start()
         dragSlotTop = -1f
         return
     }
@@ -260,18 +270,6 @@ private fun ConversationGroupHook.moveDrag(lv: ListView, y: Float) {
         else -> before.top.toFloat()
     }
     if (targetChanged) lv.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-
-    // 指示线平滑跟随（只改 translationY，避免每帧重新 layout）
-    val indicator = dragIndicator ?: return
-    val lineY = (before?.top ?: candidates.last().bottom).toFloat()
-    indicator.visibility = View.VISIBLE
-    indicator.animate().cancel()
-    indicator.animate()
-        .translationY(lineY)
-        .alpha(1f)
-        .setDuration(90L)
-        .setInterpolator(DecelerateInterpolator())
-        .start()
 }
 
 /**
