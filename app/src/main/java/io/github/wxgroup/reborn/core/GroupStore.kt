@@ -30,6 +30,8 @@ object GroupStore {
     const val KEY_SETTINGS = "settings"
     /** 上次与镜像同步（App 写出或导入）时镜像的 stamp；没变就说明没有新的外部改动 */
     private const val KEY_MIRROR_STAMP = "mirror_stamp"
+    /** 模块 App 最后一次写「偏好镜像」时的 stamp —— 用来发现微信进程侧的改动（例如在微信里改了分组颜色） */
+    private const val KEY_SETTINGS_MIRROR_STAMP = "settings_mirror_stamp"
 
     /**
      * 跨进程可读缓存文件：/data/local/tmp/ 是 1777（world-writable）且 SELinux 对 untrusted_app 可读，
@@ -104,11 +106,36 @@ object GroupStore {
 
     // ===== 显示偏好（模块 App 侧写，微信 Hook 侧读） =====
 
-    fun getSettings(ctx: Context): WxSettings = try {
-        val s = prefs(ctx).getString(KEY_SETTINGS, null)
-        if (s.isNullOrBlank()) WxSettings.DEFAULT else WxSettings.fromJson(JSONObject(s))
-    } catch (t: Throwable) {
-        WxSettings.DEFAULT
+    /**
+     * 模块 App 读偏好。
+     *
+     * ⚠️ 微信进程也可能写镜像（例如在微信里给某个分组改颜色，见 saveSettingsXposed），
+     * 所以这里先看镜像的 stamp 是不是我们最后一次写出去的那个：不是 → 以镜像为准并回写本地，
+     * 否则用户在微信里改的配色会被 App 里的旧副本覆盖回去。
+     */
+    fun getSettings(ctx: Context): WxSettings {
+        val p = prefs(ctx)
+        val f = java.io.File(TMP_SETTINGS)
+        val mirrorStamp = if (f.exists()) fileStamp(f) else -1L
+        val mine = p.getLong(KEY_SETTINGS_MIRROR_STAMP, -1L)
+        if (mirrorStamp > 0 && mirrorStamp != mine) {
+            val fromMirror = try {
+                WxSettings.fromJson(JSONObject(f.readText()))
+            } catch (t: Throwable) {
+                null
+            }
+            if (fromMirror != null) {
+                writePref(ctx, KEY_SETTINGS, fromMirror.toJson().toString())
+                p.edit().putLong(KEY_SETTINGS_MIRROR_STAMP, mirrorStamp).apply()
+                return fromMirror
+            }
+        }
+        return try {
+            val s = p.getString(KEY_SETTINGS, null)
+            if (s.isNullOrBlank()) WxSettings.DEFAULT else WxSettings.fromJson(JSONObject(s))
+        } catch (t: Throwable) {
+            WxSettings.DEFAULT
+        }
     }
 
     /** 写偏好：SharedPreferences + 镜像 + 通知微信（微信侧缓存 2s TTL，很快生效） */
@@ -116,11 +143,44 @@ object GroupStore {
         val text = s.toJson().toString()
         writePref(ctx, KEY_SETTINGS, text)
         try {
-            if (atomicWriteText(java.io.File(TMP_SETTINGS), text)) makeWorldReadable(TMP_SETTINGS)
+            val f = java.io.File(TMP_SETTINGS)
+            if (atomicWriteText(f, text)) {
+                makeWorldReadable(TMP_SETTINGS)
+                prefs(ctx).edit().putLong(KEY_SETTINGS_MIRROR_STAMP, fileStamp(f)).apply()
+            }
         } catch (t: Throwable) {
             Log.e(TAG, "镜像偏好失败: ${t.message}")
         }
+        // 微信进程里那份缓存立刻失效，下次 bind 就用新值（不必等 2s TTL）
+        settingsCacheText = null
+        settingsCacheAt = 0L
         notifyGroupsChanged(ctx)
+    }
+
+    /**
+     * 微信进程写偏好（例如长按分组 → 「改颜色」）。
+     *
+     * 只写 /data/local/tmp 那份 666 镜像（模块 App 下次读设置时会以镜像为准，见 [getSettings]），
+     * **不碰**微信私有目录 —— 偏好本来就属于模块自己的配置空间。
+     */
+    fun saveSettingsXposed(s: WxSettings): Boolean {
+        val text = s.toJson().toString()
+        val f = java.io.File(TMP_SETTINGS)
+        return try {
+            if (atomicWriteText(f, text)) {
+                makeWorldReadable(TMP_SETTINGS)
+                settingsCacheText = null
+                settingsCacheAt = 0L
+                Log.i(TAG, "微信侧已保存偏好镜像 (${text.length}字符)")
+                true
+            } else {
+                Log.e(TAG, "微信侧写偏好镜像失败")
+                false
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "微信侧保存偏好失败: ${t.message}")
+            false
+        }
     }
 
     // ===== 微信 Hook 侧读偏好 =====

@@ -1,5 +1,6 @@
 package io.github.wxgroup.reborn.hook
 
+import android.view.View
 import android.widget.TextView
 import io.github.wxgroup.reborn.core.WxGroup
 
@@ -77,5 +78,6 @@ internal class FolderHolder(
     val unread: TextView,    // 未读角标（红点/数字）
     val back: TextView,      // 打开态左侧返回箭头（常态 GONE）
     val readBtn: TextView,   // 右侧「已读」按钮（有未读时才显示；不挂点击监听，见 FolderRow）
+    val bar: View,           // 左侧强调色条（主题/单组色）
     var groupId: String? = null
 )

@@ -103,6 +103,37 @@
                 android:text="@string/settings_section_main" />
 
             <LinearLayout
+                android:id="@+id/btn_theme"
+                style="@style/WgCard.Entry">
+
+                <TextView
+                    style="@style/WgIconChip"
+                    android:text="@string/wg_icon_theme" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/WgRowTitle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_theme"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tv_theme_desc"
+                        style="@style/WgRowSub"
+                        android:text="@string/settings_theme_desc" />
+                </LinearLayout>
+
+                <TextView style="@style/WgChevron" />
+            </LinearLayout>
+
+            <LinearLayout
                 android:id="@+id/btn_groups"
                 style="@style/WgCard.Entry">
 

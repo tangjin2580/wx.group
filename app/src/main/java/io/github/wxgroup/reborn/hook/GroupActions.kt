@@ -6,6 +6,7 @@ import android.view.Gravity
 import android.view.View
 import io.github.wxgroup.reborn.core.GroupTheme
 import io.github.wxgroup.reborn.core.WxGroup
+import io.github.wxgroup.reborn.core.WxSettings
 import io.github.wxgroup.reborn.xp.XposedHelpers
 
 /**
@@ -47,6 +48,7 @@ internal fun ConversationGroupHook.handleHeaderLongPress(view: View?, group: WxG
         "拖动排序…",
         "重命名",
         "换图标",
+        "改颜色",
         "清空成员",
         "删除分组"
     )
@@ -65,8 +67,9 @@ internal fun ConversationGroupHook.handleHeaderLongPress(view: View?, group: WxG
                         1 -> enterReorderMode()
                         2 -> showRenameGroupDialog(act, group.id)
                         3 -> showIconPicker(act, group.id)
-                        4 -> confirmClearMembers(act, group.id)
-                        5 -> confirmDeleteGroup(act, group.id)
+                        4 -> showColorPicker(act, group.id)
+                        5 -> confirmClearMembers(act, group.id)
+                        6 -> confirmDeleteGroup(act, group.id)
                     }
                 } catch (t: Throwable) {
                     log("分组操作失败: ${t.javaClass.simpleName}: ${t.message}")
@@ -240,6 +243,83 @@ internal fun ConversationGroupHook.showIconPicker(act: android.app.Activity, gid
         dlg.dismiss()
     }
     dlg.show()
+}
+
+/**
+ * 改单个分组的颜色（微信内菜单）。
+ *
+ * 候选色来自**当前主题的色板**，保证怎么选都在一个色系里；末尾是主题主色。
+ * 写入 [WxSettings.groupColors] —— 分组数据（成员/顺序）一个字节都不动，
+ * 只改「外观配置」，走的是设置镜像那条通道（模块 App 下次读设置时会以镜像为准）。
+ */
+internal fun ConversationGroupHook.showColorPicker(act: android.app.Activity, gid: String) {
+    val s = wxSettings()
+    val g = sortedGroups().firstOrNull { it.id == gid } ?: return
+    val theme = GroupTheme.of(s.themeId)
+    val candidates = (theme.swatches + theme.palette(themeDark(act, s)).primary).distinct()
+    val current = s.groupColors[gid]
+
+    val grid = android.widget.GridView(act).apply {
+        numColumns = 5
+        adapter = object : android.widget.BaseAdapter() {
+            override fun getCount() = candidates.size
+            override fun getItem(position: Int) = candidates[position]
+            override fun getItemId(position: Int) = position.toLong()
+            override fun getView(position: Int, cv: android.view.View?, parent: android.view.ViewGroup): android.view.View {
+                val c = candidates[position]
+                val box = android.widget.FrameLayout(act).apply {
+                    val p = dp(act, 8)
+                    setPadding(p, p, p, p)
+                }
+                val dot = android.view.View(act).apply {
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        setColor(c)
+                        if (c == current) setStroke(dp(act, 2), if (isDark(act)) Color.WHITE else Color.BLACK)
+                    }
+                    layoutParams = android.widget.FrameLayout.LayoutParams(dp(act, 34), dp(act, 34), Gravity.CENTER)
+                }
+                box.addView(dot)
+                return box
+            }
+        }
+    }
+    val dlg = android.app.AlertDialog.Builder(act)
+        .setTitle("「${g.name}」的颜色")
+        .setView(grid)
+        .setNeutralButton("跟随主题") { _, _ ->
+            val map = LinkedHashMap(s.groupColors)
+            map.remove(gid)
+            saveThemeSettings(s.copy(groupColors = map))
+            toast(act, "已恢复跟随主题")
+        }
+        .setNegativeButton("取消", null)
+        .create()
+    grid.setOnItemClickListener { _, _, pos, _ ->
+        val c = candidates[pos]
+        val map = LinkedHashMap(s.groupColors)
+        map[gid] = c
+        saveThemeSettings(s.copy(groupColors = map))
+        toast(act, "已设置颜色")
+        dlg.dismiss()
+    }
+    dlg.show()
+}
+
+/**
+ * 在微信进程里保存「主题/外观」设置。
+ * 只写 /data/local/tmp 的设置镜像（666，微信 uid 可写），模块 App 下次读设置时会认它；
+ * 顺手让两层缓存失效，列表下一次 bind 就用新颜色，不等 2s TTL。
+ */
+internal fun ConversationGroupHook.saveThemeSettings(s: io.github.wxgroup.reborn.core.WxSettings) {
+    try {
+        io.github.wxgroup.reborn.core.GroupStore.saveSettingsXposed(s)
+    } catch (t: Throwable) {
+        log("保存主题设置失败: ${t.message}")
+    }
+    wxSettingsCache = null
+    wxSettingsAt = 0L
+    notifyList()
 }
 
 internal fun ConversationGroupHook.confirmClearMembers(act: android.app.Activity, gid: String) {

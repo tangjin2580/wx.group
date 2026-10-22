@@ -32,6 +32,10 @@
             android:name=".ui.GroupManageActivity"
             android:exported="true" />
         <activity
+            android:name=".ui.ThemeActivity"
+            android:exported="false"
+            android:theme="@style/AppTheme.NoActionBar" />
+        <activity
             android:name=".ui.SortGroupsActivity"
             android:exported="true" />
         <activity

@@ -13,6 +13,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import io.github.wxgroup.reborn.core.GroupTheme
 import io.github.wxgroup.reborn.core.WxGroup
+import io.github.wxgroup.reborn.core.WxSettings
 
 /**
  * 收纳组行的 View：构建 + 绑定。
@@ -37,7 +38,13 @@ import io.github.wxgroup.reborn.core.WxGroup
  */
 
 // ==================================================================================
-// 微信配色（集中在一处，深/浅色只在这里分支）
+// 配色
+//
+// 分两层：
+//   1. **主题色板**（GroupTheme.Palette）—— 收纳组自己的颜色（色条/图标底/行底/字色），
+//      支持 8 套主题 + 单组覆盖，是本模块负责创建的那部分 View 唯一允许的取色来源。
+//   2. **微信原生基线**（WxColors）—— 只在「主题没覆盖到的兜底场景」用（例如未读角标、
+//      拿不到配置时的默认字色）。绝不去改微信原生会话行的颜色。
 // ==================================================================================
 private object WxColors {
     const val LIGHT_ROW = 0xFFFFFFFF.toInt()
@@ -56,6 +63,16 @@ private object WxColors {
     const val READ_BG_DARK = 0x2407C160
 }
 
+/**
+ * 当前深浅色：把主题的 darkMode（system / light / dark）和微信自己的夜间模式合起来判。
+ * 注意只能影响**我们创建的行**，不能拿去改微信任何原生控件。
+ */
+internal fun ConversationGroupHook.themeDark(ctx: Context, s: WxSettings): Boolean = when (s.darkMode) {
+    GroupTheme.Mode.LIGHT -> false
+    GroupTheme.Mode.DARK -> true
+    else -> isDark(ctx)
+}
+
 // ==================================================================================
 // 分组行 View
 // ==================================================================================
@@ -64,7 +81,9 @@ internal fun ConversationGroupHook.createFolderRow(ctx: Context, clickable: Bool
     val row = LinearLayout(ctx).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(ctx, 16), dp(ctx, 8), dp(ctx, 16), dp(ctx, 8))
+        // 左边只留 8dp：剩下的 8dp 由「色条(3dp) + 间距(5dp)」补上，
+        // 图标左边缘仍然落在 16dp —— 和微信会话行的头像对齐，不会显得缩进了一截。
+        setPadding(dp(ctx, 8), dp(ctx, 8), dp(ctx, 16), dp(ctx, 8))
         setBackgroundColor(if (dark) WxColors.DARK_ROW else WxColors.LIGHT_ROW)
         // 关键：ListView 分支下**不要**让收纳组行自己 clickable。
         // 行一旦 clickable 就会成为触摸目标，把 DOWN 吃掉：
@@ -82,6 +101,18 @@ internal fun ConversationGroupHook.createFolderRow(ctx: Context, clickable: Bool
         isLongClickable = clickable
         descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
     }
+
+    // 左侧强调色条：3dp 宽、和图标等高，颜色 = 主题色板里的单组色。
+    // 这是「分组」最主要的视觉标识 —— 比大面积彩色背景轻得多，也和微信的行结构不冲突。
+    val bar = View(ctx).apply {
+        val bg = GradientDrawable()
+        bg.shape = GradientDrawable.RECTANGLE
+        bg.cornerRadius = dp(ctx, 2).toFloat()
+        bg.setColor(WxColors.READ_FG)
+        background = bg
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+    row.addView(bar, LinearLayout.LayoutParams(dp(ctx, 3), dp(ctx, 34)).apply { rightMargin = dp(ctx, 5) })
 
     // 打开态的返回箭头：放最左边（页面标题栏语义），平时 GONE。
     // 整行点击本身就是「返回」，这里只做视觉引导 + 加大触控区域。
@@ -185,7 +216,7 @@ internal fun ConversationGroupHook.createFolderRow(ctx: Context, clickable: Bool
         leftMargin = dp(ctx, 4)
     })
 
-    val holder = FolderHolder(icon, name, sub, arrow, unread, back, readBtn)
+    val holder = FolderHolder(icon, name, sub, arrow, unread, back, readBtn, bar)
     row.tag = holder
     // 点击/长按不在这里处理：见 installItemClickInterceptor / installItemLongPressInterceptor
     return row
@@ -227,8 +258,18 @@ internal fun ConversationGroupHook.bindFolderRow(
     holder.groupId = group.id
     val opened = openGroupId == group.id
     val total = group.members.size
-    val dark = isDark(ctx)
+    val dark = themeDark(ctx, settings)
     val compact = settings.compactRows
+
+    // ── 主题取色 ──────────────────────────────────────────────────────
+    // 优先级：单组自定义色 > 主题色板（按显示顺序轮转）> 主题主色。
+    // 每次 bind 都重算：列表复用时行会被绑到别的分组上，颜色必须跟着换，否则串色。
+    val palette = GroupTheme.of(settings.themeId).palette(dark)
+    val accent = GroupTheme.colorForGroup(
+        group.id,
+        sortedGroups().indexOfFirst { it.id == group.id },
+        settings
+    )
 
     holder.name.text = group.name.ifBlank { "未命名分组" }
 
@@ -262,6 +303,16 @@ internal fun ConversationGroupHook.bindFolderRow(
     (holder.icon.background as? GradientDrawable)?.cornerRadius = dp(ctx, iconSize) * 0.22f
     holder.icon.text = group.icon.ifBlank { GroupTheme.iconOf(group.id) }
 
+    // 色条：高度跟着图标缩（约 0.72 倍），颜色 = 该分组的强调色
+    (holder.bar.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+        val h = dp(ctx, (iconSize * 0.72f).toInt())
+        if (lp.height != h) {
+            lp.height = h
+            holder.bar.layoutParams = lp
+        }
+    }
+    (holder.bar.background as? GradientDrawable)?.setColor(accent)
+
     // ── 文案 ─────────────────────────────────────────────────────────
     val unreadTip = if (unreadCount > 0) " · $unreadCount 条未读" else ""
     val closedSub = when {
@@ -284,19 +335,33 @@ internal fun ConversationGroupHook.bindFolderRow(
     // 排序模式下右侧箭头换成「≡」，提示当前可以拖动
     if (!opened) holder.arrow.text = if (reorderMode) "≡" else "›"
 
+    // 行底色 = 主题行底色 + 一点点强调色（7%）。
+    // 刻意压得很低：大面积彩色底会显得「贴了一层」，低饱和只留色相暗示，仍像微信自己的行。
+    // 打开态（二级页面标题栏）用 selected 打底、混到 20%，区分度够又不刺眼。
     view.setBackgroundColor(
-        when {
-            opened && dark -> WxColors.DARK_HEADER
-            opened -> WxColors.LIGHT_HEADER
-            dark -> WxColors.DARK_ROW
-            else -> WxColors.LIGHT_ROW
-        }
+        if (opened) GroupTheme.blend(palette.selected, accent, 0.20f)
+        else GroupTheme.blend(palette.groupBg, accent, 0.07f)
+    )
+
+    // ── 文字 / 图标容器 / 箭头：全部来自同一套色板 ────────────────────
+    holder.name.setTextColor(palette.title)
+    holder.sub.setTextColor(palette.sub)
+    holder.arrow.setTextColor(palette.disabled)
+    holder.back.setTextColor(palette.disabled)
+    (holder.icon.background as? GradientDrawable)?.setColor(
+        GroupTheme.blend(palette.iconBg, accent, 0.22f)
+    )
+    holder.readBtn.setTextColor(palette.primary)
+    (holder.readBtn.background as? GradientDrawable)?.setColor(
+        GroupTheme.blend(palette.groupBg, palette.primary, 0.14f)
     )
 
     // ── 未读角标 ─────────────────────────────────────────────────────
     // 打开态不显示组级角标：里面每个会话自己都有角标，再在标题上重复一遍是噪音。
     if (unreadCount > 0 && !opened) {
         holder.unread.visibility = View.VISIBLE
+        // 未读角标恒为微信品牌红：靠红色识别未读是最强的心智，不能跟着主题变色。
+        (holder.unread.background as? GradientDrawable)?.setColor(GroupTheme.UNREAD_BADGE)
         if (settings.badgeDot) {
             holder.unread.text = ""
             holder.unread.setPadding(0, 0, 0, 0)

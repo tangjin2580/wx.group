@@ -51,6 +51,27 @@
     <string name="settings_kill_wechat_desc">改完配置后需要重启微信才会生效</string>
     <string name="settings_about_desc">版本 %1$s · 所有数据只保存在本机</string>
 
+    <!-- ── 外观与主题 ─────────────────────────────────────────────────── -->
+    <string name="settings_theme">外观与主题</string>
+    <string name="settings_theme_desc">8 套内置主题 · 支持单组独立配色</string>
+    <string name="theme_title">外观与主题</string>
+    <string name="theme_hint">主题会同步到微信会话列表；未读角标恒为红色，不随主题变化</string>
+    <string name="theme_mode_title">深浅色模式</string>
+    <string name="theme_mode_system">跟随系统</string>
+    <string name="theme_mode_light">浅色</string>
+    <string name="theme_mode_dark">深色</string>
+    <string name="theme_list_title">主题</string>
+    <string name="theme_reset">恢复默认主题</string>
+    <string name="theme_group_title">分组独立配色</string>
+    <string name="theme_group_empty">还没有分组，先去「分组管理」新建一个</string>
+    <string name="theme_group_follow">跟随主题</string>
+    <string name="theme_group_custom">自定义颜色</string>
+    <string name="theme_group_reset">跟随主题</string>
+    <string name="theme_sample_hint">主色 / 强调 / 行底 / 图标底</string>
+    <string name="theme_preview_name">工作群</string>
+    <string name="theme_preview_sub">8 个成员 · 3 条未读</string>
+    <string name="theme_applied">已应用，微信会话列表会自动更新</string>
+
     <!-- 条目左侧图标用的单字（纯装饰，已设 importantForAccessibility=no） -->
     <string name="wg_icon_groups">组</string>
     <string name="wg_icon_signature">签</string>
@@ -58,6 +79,7 @@
     <string name="wg_icon_import">入</string>
     <string name="wg_icon_kill">停</string>
     <string name="wg_icon_about">关</string>
+    <string name="wg_icon_theme">色</string>
 
     <string name="group_manage_title">分组管理</string>
     <string name="group_add">新建分组</string>

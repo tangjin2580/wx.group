@@ -18,6 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import io.github.wxgroup.reborn.R
 import io.github.wxgroup.reborn.core.GroupStore
+import io.github.wxgroup.reborn.core.GroupTheme
 import io.github.wxgroup.reborn.core.WxSettings
 
 class SettingsActivity : AppCompatActivity() {
@@ -31,12 +32,19 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var swCompact: SwitchCompat
     private lateinit var swSenders: SwitchCompat
 
+    /**
+     * 读进来的完整设置。开关变化时只改开关那几个字段、其余原样带回去 ——
+     * 早期 collect() 是「用四个开关 new 一个 WxSettings」，会把主题配置整片冲掉
+     * （用户刚选的主题，一动开关就没了）。
+     */
+    private var base: WxSettings = WxSettings.DEFAULT
+
     /** 同步通道卡片的当前显示状态 —— 用来避免 onResume 反复重播同一段淡入淡出 */
     private var channelShown: Boolean? = null
     /** 首次进入不做可见性动画，否则会从「不可见」淡入一次，看着像闪一下 */
     private var channelAnimated = false
 
-    private fun collect(): WxSettings = WxSettings(
+    private fun collect(): WxSettings = base.copy(
         badgeDot = swBadgeDot.isChecked,
         hideEmptyGroups = swHideEmpty.isChecked,
         compactRows = swCompact.isChecked,
@@ -62,6 +70,7 @@ class SettingsActivity : AppCompatActivity() {
         // 写入后走「镜像 + Provider 通知」通道，微信里的 Hook 2s 内拿到新值，
         // 不用重启微信（轮询兜底，最坏也就 1.2s 一轮的检测节奏）。
         val s = GroupStore.getSettings(this)
+        base = s
         swBadgeDot = findViewById(R.id.sw_badge_dot)
         swHideEmpty = findViewById(R.id.sw_hide_empty)
         swCompact = findViewById(R.id.sw_compact)
@@ -82,6 +91,9 @@ class SettingsActivity : AppCompatActivity() {
         bindRow(R.id.row_compact, swCompact)
         bindRow(R.id.row_senders, swSenders)
 
+        findViewById<View>(R.id.btn_theme).setOnClickListener {
+            startActivity(Intent(this, ThemeActivity::class.java))
+        }
         findViewById<View>(R.id.btn_groups).setOnClickListener {
             startActivity(Intent(this, GroupManageActivity::class.java))
         }
@@ -132,6 +144,19 @@ class SettingsActivity : AppCompatActivity() {
         val first = !channelAnimated
         refreshChannelState()
         if (first) channelAnimated = true
+        // 从主题页回来（或微信里改过配色）时把当前主题显示出来
+        base = GroupStore.getSettings(this)
+        refreshThemeDesc()
+    }
+
+    private fun refreshThemeDesc() {
+        val mode = when (base.darkMode) {
+            GroupTheme.Mode.LIGHT -> getString(R.string.theme_mode_light)
+            GroupTheme.Mode.DARK -> getString(R.string.theme_mode_dark)
+            else -> getString(R.string.theme_mode_system)
+        }
+        findViewById<TextView>(R.id.tv_theme_desc).text =
+            "${GroupTheme.labelOf(base.themeId)} · $mode"
     }
 
     /** 镜像文件不存在时，App 里的改动到不了微信 —— 显式提示，而不是只在日志里失败 */
