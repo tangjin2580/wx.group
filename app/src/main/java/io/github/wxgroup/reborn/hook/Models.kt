@@ -1,12 +1,15 @@
 package io.github.wxgroup.reborn.hook
 
-import android.view.View
 import android.widget.TextView
 import io.github.wxgroup.reborn.core.WxGroup
 
-/** 虚拟行类型：0 = 收纳组头部行，1 = 真实会话行 */
+/** 虚拟行类型：0 = 收纳组行，1 = 真实会话行，2 = 「分组」小节标题 */
 internal const val TYPE_HEADER = 0
 internal const val TYPE_REAL = 1
+internal const val TYPE_SECTION = 2
+
+/** 小节标题行的 tag：用于 ListView 的 convertView 复用判定（它不是会话行、也不是组行） */
+internal const val SECTION_TAG = "WxGroupSection"
 
 /**
  * 收纳组行专用的 view type 默认值。
@@ -74,6 +77,5 @@ internal class FolderHolder(
     val unread: TextView,    // 未读角标（红点/数字）
     val back: TextView,      // 打开态左侧返回箭头（常态 GONE）
     val readBtn: TextView,   // 右侧「已读」按钮（有未读时才显示；不挂点击监听，见 FolderRow）
-    val bar: View,           // 左侧分组色条（分组行最醒目的标识）
     var groupId: String? = null
 )

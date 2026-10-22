@@ -50,6 +50,11 @@ internal fun ConversationGroupHook.installItemClickInterceptor() {
                     correctTapArgs(param)
                     val pos = param.args.getOrNull(1) as? Int ?: return
                     val view = param.args.getOrNull(0) as? View
+                    // 「分组」小节标题：吃掉，别往下传
+                    if (isSectionPosition(parent, pos)) {
+                        param.result = true
+                        return
+                    }
                     val g = folderGroupOf(view, parent, pos) ?: return
                     // 收纳组行：我们处理，阻止微信把虚拟行当真实会话处理
                     view?.playSoundEffect(SoundEffectConstants.CLICK)
@@ -162,6 +167,7 @@ private class OurItemClickListener(
         var p = position
         try {
             if (host.isOurListView(parent)) {
+                if (host.isSectionPosition(parent, position)) return   // 小节标题：不响应
                 val g = host.folderGroupOf(view, parent, position)
                 if (g != null) {
                     host.handleHeaderTap(g.id, view)
@@ -242,6 +248,7 @@ private class OurItemLongClickListener(
         var p = position
         try {
             if (host.isOurListView(parent)) {
+                if (host.isSectionPosition(parent, position)) return true   // 小节标题：不响应
                 val g = host.folderGroupOf(view, parent, position)
                 if (g != null) return host.handleHeaderLongPress(view, g)
                 val np = host.truePosition(parent, view, position)
@@ -280,6 +287,11 @@ internal fun ConversationGroupHook.installItemLongPressInterceptor() {
                         correctTapArgs(param)
                         val pos = param.args.getOrNull(1) as? Int ?: return
                         val v = param.args.getOrNull(0) as? View
+                        // 「分组」小节标题：长按同样吃掉，不弹菜单也不传给微信
+                        if (isSectionPosition(parent, pos)) {
+                            param.result = true
+                            return
+                        }
                         val g = folderGroupOf(v, parent, pos) ?: return
                         param.result = handleHeaderLongPress(v, g)
                     } catch (t: Throwable) {

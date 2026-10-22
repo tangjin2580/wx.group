@@ -98,6 +98,16 @@ internal fun ConversationGroupHook.truePosition(parent: Any?, view: View?, fallb
 }
 
 /**
+ * 这个位置是不是「分组」小节标题行。
+ * 小节行既不是会话也不是收纳组，任何点击/长按都要我们自己吃掉 ——
+ * 交给微信会按会话行处理，拿不到会话就 NPE。
+ */
+internal fun ConversationGroupHook.isSectionPosition(parent: Any?, pos: Int): Boolean {
+    val idx = pos - headerCount(parent)
+    return legacyModel?.entries?.getOrNull(idx)?.type == TYPE_SECTION
+}
+
+/**
  * 这次点击/长按能不能**交回微信**处理？
  *
  * ── 为什么需要这个判断（真实闪退）──

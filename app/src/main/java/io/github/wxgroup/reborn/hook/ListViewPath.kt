@@ -49,11 +49,11 @@ internal fun ConversationGroupHook.installListViewPath(loader: ClassLoader, sig:
     val intArg = Int::class.javaPrimitiveType!!
     hookBaseAdapter(base, "getItemViewType", arrayOf(intArg)) { p -> legacyHeaderType(p) }
     hookBaseAdapter(base, "getViewTypeCount", emptyArray()) { p ->
-        // 收纳组行占用「微信原有 type 数量」这个新值：contentCount 从 1 变 2 时，
-        // 原来的实现写死 LEGACY_HEADER_VIEW_TYPE=1，微信将来自己新增 type 就会撞车。
+        // 收纳组行占用「微信原有 type 数量」这个新值，小节标题再占一个：
+        // 写死常量的话微信将来自己新增 type 就会撞车，所以一律基于运行时原值加。
         val orig = (invokeOriginal(p) as? Int)?.takeIf { it > 0 } ?: 1
         legacyHeaderViewType = orig
-        orig + 1
+        orig + 2
     }
     // 注意：**不要**让 isEnabled(收纳组行) 返回 false。
     // 那会让 AbsListView.onInterceptTouchEvent 不进 TOUCH_MODE_DOWN，触摸被行 View 吃掉：
@@ -135,6 +135,9 @@ internal fun ConversationGroupHook.legacyHeaderType(param: MethodHookParam): Any
     if (pos !in m.entries.indices) return null
     val e = m.entries[pos]
     if (e.type == TYPE_HEADER) return legacyHeaderViewType
+    // 「分组」小节标题也要独占一个 view type，否则 ListView 会把组行/会话行
+    // 的 convertView 复用过来（类型不同 → 渲染成四不像）
+    if (e.type == TYPE_SECTION) return legacyHeaderViewType + 1
     param.args[0] = e.realPos
     return invokeOriginal(param)
 }
@@ -458,11 +461,17 @@ internal fun ConversationGroupHook.buildLegacyModel(a: Any, realCount: Int, grou
     }
 
     val hideEmpty = wxSettings().hideEmptyGroups
+    // 「分组」小节标题：先占位，真有分组行再加（分组全被隐藏时不留空标题）
+    var sectionAdded = false
     for (g in groups) {
         val memberPos = membersOf(g)
         // 「隐藏空分组」：成员一个都不在会话列表里的组不占行（设置页可开关）。
         // 有成员但都收拢在其他组（owner 不归它）同样按空处理 —— 用户看到的就是净列表。
         if (hideEmpty && memberPos.isEmpty()) continue
+        if (!sectionAdded) {
+            entries.add(VEntry(TYPE_SECTION))
+            sectionAdded = true
+        }
         entries.add(VEntry(TYPE_HEADER, g, -1, memberPos.size))
         hidden += memberPos.size
     }
@@ -485,6 +494,16 @@ internal fun ConversationGroupHook.onLegacyGetView(param: MethodHookParam) {
         val model = legacyModel
         val e = model?.entries?.getOrNull(pos)
         val reuse = param.args.getOrNull(1) as? View
+        // ── 「分组」小节标题 ──────────────────────────────────────────
+        if (e != null && e.type == TYPE_SECTION) {
+            val ctx = (param.args.getOrNull(2) as? ViewGroup)?.context ?: appContext ?: return
+            val view = if (reuse?.tag === SECTION_TAG) reuse else createSectionRow(ctx)
+            view.layoutParams = android.widget.AbsListView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            param.result = view
+            return
+        }
         if (e != null && e.type == TYPE_HEADER && e.group != null) {
             val ctx = (param.args.getOrNull(2) as? ViewGroup)?.context ?: appContext ?: return
             // 只复用「收纳组行」这种类型；腾讯会话行的 convertView 直接丢弃，

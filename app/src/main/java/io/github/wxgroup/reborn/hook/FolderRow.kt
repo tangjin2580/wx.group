@@ -5,10 +5,10 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import io.github.wxgroup.reborn.core.GroupTheme
@@ -16,6 +16,14 @@ import io.github.wxgroup.reborn.core.WxGroup
 
 /**
  * 收纳组行的 View：构建 + 绑定。
+ *
+ * ── 设计取向：长得像微信自己的行，而不是「贴上去的一层」──
+ * 早期版本为了「分组够显眼」加了左侧色条 + 彩色行底 + 加粗标题，结果整块看上去
+ * 像另一个 App 的列表硬塞进微信（用户原话：「不太沉浸，页面比较割裂」）。
+ * 现在的做法是**用微信自己的语言做区分**：
+ *   · 图标 = 2×2 成员拼接（微信「折叠的群聊」行就是这个样子）
+ *   · 分组区上方加一行「分组」小节标题（微信列表里本来就有小节标题这种结构）
+ *   · 行本身：底色、字色、字号、间距全部和微信会话行一致，不加额外装饰
  *
  * ⚠️ 行保持「不可点」（isClickable=false）：一旦 clickable 就会吃掉触摸 DOWN，
  * 从这一行起手无法滚动列表，而且会和微信自己的列表项监听器抢这次点击。
@@ -25,9 +33,7 @@ import io.github.wxgroup.reborn.core.WxGroup
  *   行高 64dp = 头像 48dp + 上下各 8dp
  *   标题 17sp（常规字重）/ 副标题 14sp
  *   标题 #191919、副标题 #999999（深色：#D6D6D6 / #8A8A8A）
- *   行背景 #FFFFFF / #191919（不是 #2C2C2E，那个偏灰会让整行像外来的卡片）
- * 收纳组行只在「头像区」和「右侧角标」上做区分，其余尽量和微信会话行一致，
- * 这样滚动时不会有一行显眼的异类跳出来。
+ *   行背景 #FFFFFF / #191919
  */
 
 // ==================================================================================
@@ -48,17 +54,6 @@ private object WxColors {
     const val READ_FG = 0xFF07C160.toInt()        // 微信品牌绿（「已读」按钮文字）
     const val READ_BG_LIGHT = 0x1407C160          // 8% 绿，和微信浅色底的标签一个观感
     const val READ_BG_DARK = 0x2407C160
-}
-
-/**
- * 把 tint 色按 ratio 混到 base 上（不引入 alpha，避免和行底色叠加两次）。
- * 用来给分组行铺一层「几乎看不见但能感觉到」的分组色底。
- */
-private fun blend(base: Int, tint: Int, ratio: Float): Int {
-    val r = (base shr 16 and 0xFF) * (1 - ratio) + (tint shr 16 and 0xFF) * ratio
-    val g = (base shr 8 and 0xFF) * (1 - ratio) + (tint shr 8 and 0xFF) * ratio
-    val b = (base and 0xFF) * (1 - ratio) + (tint and 0xFF) * ratio
-    return (0xFF shl 24) or (r.toInt() shl 16) or (g.toInt() shl 8) or b.toInt()
 }
 
 // ==================================================================================
@@ -88,18 +83,6 @@ internal fun ConversationGroupHook.createFolderRow(ctx: Context, clickable: Bool
         descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
     }
 
-    // 左侧分组色条：分组行最醒目的标识（普通会话行没有）。
-    // 宽度 3dp + 右间距 13dp = 原来的 16dp 左边距，图标位置和会话行完全对齐。
-    val bar = View(ctx).apply {
-        background = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(ctx, 2).toFloat()
-        }
-    }
-    row.addView(bar, LinearLayout.LayoutParams(dp(ctx, 3), ViewGroup.LayoutParams.MATCH_PARENT).apply {
-        rightMargin = dp(ctx, 13)
-    })
-
     // 打开态的返回箭头：放最左边（页面标题栏语义），平时 GONE。
     // 整行点击本身就是「返回」，这里只做视觉引导 + 加大触控区域。
     val back = TextView(ctx).apply {
@@ -113,8 +96,8 @@ internal fun ConversationGroupHook.createFolderRow(ctx: Context, clickable: Bool
     row.addView(back, LinearLayout.LayoutParams(dp(ctx, 28), dp(ctx, 48)).apply { rightMargin = dp(ctx, 4) })
 
     // 分组图标：48dp（微信头像尺寸），emoji 用 0.58 倍容器大小，基本撑满圆角方块。
-    // 底色由 bindFolderRow 按分组 id 的哈希色铺一层很淡的透明色，和微信灰底区分开。
-    val badge = TextView(ctx).apply {
+    // 底色中性灰 —— 不跟着分组染色，保持和微信会话行一个观感。
+    val icon = TextView(ctx).apply {
         text = "📁"
         textSize = 28f
         includeFontPadding = false
@@ -122,10 +105,10 @@ internal fun ConversationGroupHook.createFolderRow(ctx: Context, clickable: Bool
         val bg = GradientDrawable()
         bg.shape = GradientDrawable.RECTANGLE
         bg.cornerRadius = dp(ctx, 11).toFloat()
-        bg.setColor(if (dark) 0xFF2E2E2E.toInt() else 0xFFFFFFFF.toInt())
+        bg.setColor(if (dark) 0xFF2E2E2E.toInt() else 0xFFF2F2F2.toInt())
         background = bg
     }
-    row.addView(badge, LinearLayout.LayoutParams(dp(ctx, 48), dp(ctx, 48)).apply { rightMargin = dp(ctx, 12) })
+    row.addView(icon, LinearLayout.LayoutParams(dp(ctx, 48), dp(ctx, 48)).apply { rightMargin = dp(ctx, 12) })
 
     val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
     val name = TextView(ctx).apply {
@@ -202,10 +185,33 @@ internal fun ConversationGroupHook.createFolderRow(ctx: Context, clickable: Bool
         leftMargin = dp(ctx, 4)
     })
 
-    val holder = FolderHolder(badge, name, sub, arrow, unread, back, readBtn, bar)
+    val holder = FolderHolder(icon, name, sub, arrow, unread, back, readBtn)
     row.tag = holder
     // 点击/长按不在这里处理：见 installItemClickInterceptor / installItemLongPressInterceptor
     return row
+}
+
+/**
+ * 「分组」小节标题行。
+ *
+ * 微信自己的列表里本来就有「小节标题」这种结构（通讯录的字母索引、公众号列表的分区），
+ * 用它把分组块从会话流里「框」出来，比给每一行加装饰自然得多，也不显得是外挂。
+ */
+internal fun ConversationGroupHook.createSectionRow(ctx: Context): View {
+    val dark = isDark(ctx)
+    return TextView(ctx).apply {
+        text = "分组"
+        textSize = 13f
+        includeFontPadding = false
+        gravity = Gravity.CENTER_VERTICAL
+        setTextColor(if (dark) WxColors.DARK_SUB else WxColors.LIGHT_SUB)
+        setPadding(dp(ctx, 17), dp(ctx, 12), dp(ctx, 16), dp(ctx, 6))
+        setBackgroundColor(if (dark) WxColors.DARK_ROW else WxColors.LIGHT_ROW)
+        // 小节行不参与点击：tag 用常量串，convertView 复用时靠它认出来
+        tag = SECTION_TAG
+        isClickable = false
+        isLongClickable = false
+    }
 }
 
 internal fun ConversationGroupHook.bindFolderRow(
@@ -242,10 +248,9 @@ internal fun ConversationGroupHook.bindFolderRow(
         else -> 17f
     }
     // 标题栏语义下加粗；列表里的行保持常规字重（微信会话标题不加粗）
-    holder.name.setTypeface(null, Typeface.BOLD)
+    holder.name.setTypeface(null, if (opened) Typeface.BOLD else Typeface.NORMAL)
     holder.sub.textSize = if (compact) 13f else 14f
 
-    // 图标容器 + 圆角 + emoji 字号一起随档位缩放
     (holder.icon.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
         if (lp.width != dp(ctx, iconSize) || lp.height != dp(ctx, iconSize)) {
             lp.width = dp(ctx, iconSize)
@@ -255,6 +260,7 @@ internal fun ConversationGroupHook.bindFolderRow(
     }
     holder.icon.textSize = iconSize * 0.58f
     (holder.icon.background as? GradientDrawable)?.cornerRadius = dp(ctx, iconSize) * 0.22f
+    holder.icon.text = group.icon.ifBlank { GroupTheme.iconOf(group.id) }
 
     // ── 文案 ─────────────────────────────────────────────────────────
     val unreadTip = if (unreadCount > 0) " · $unreadCount 条未读" else ""
@@ -285,22 +291,6 @@ internal fun ConversationGroupHook.bindFolderRow(
             dark -> WxColors.DARK_ROW
             else -> WxColors.LIGHT_ROW
         }
-    )
-
-    // 图标：显式指定的优先，否则按 id 哈希取默认；底色用同一 id 的哈希色（带透明度当浅底）
-    holder.icon.text = group.icon.ifBlank { GroupTheme.iconOf(group.id) }
-    val c = GroupTheme.colorOf(group.id)
-    // 左侧色条：分组行一眼可辨；打开态是标题栏语义，色条让位给返回箭头
-    holder.bar.visibility = if (opened) View.GONE else View.VISIBLE
-    (holder.bar.background as? GradientDrawable)?.setColor(c)
-    // 行底色：叠一层极淡的分组色，一屏里多个分组各自成块
-    if (!opened) {
-        val base = if (dark) WxColors.DARK_ROW else WxColors.LIGHT_ROW
-        view.setBackgroundColor(blend(base, c, if (dark) 0.14f else 0.085f))
-    }
-    // 图标底色：用分组色的实淡底（比之前 10% 明显得多，一眼看出「这是分组」）
-    (holder.icon.background as? GradientDrawable)?.setColor(
-        if (dark) (c and 0x00FFFFFF) or 0x40000000 else (c and 0x00FFFFFF) or 0x2E000000
     )
 
     // ── 未读角标 ─────────────────────────────────────────────────────
