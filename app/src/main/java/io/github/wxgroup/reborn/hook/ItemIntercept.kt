@@ -54,7 +54,7 @@ internal fun ConversationGroupHook.installItemClickInterceptor() {
                     // 收纳组行：我们处理，阻止微信把虚拟行当真实会话处理
                     view?.playSoundEffect(SoundEffectConstants.CLICK)
                     logItemDispatch(view, parent, pos, "收纳组行「${g.name}」→ 展开/折叠")
-                    handleHeaderTap(g.id)
+                    handleHeaderTap(g.id, view)
                     param.result = true
                 } catch (t: Throwable) {
                     log("收纳组点击拦截异常: ${t.javaClass.simpleName}: ${t.message}")
@@ -164,7 +164,7 @@ private class OurItemClickListener(
             if (host.isOurListView(parent)) {
                 val g = host.folderGroupOf(view, parent, position)
                 if (g != null) {
-                    host.handleHeaderTap(g.id)
+                    host.handleHeaderTap(g.id, view)
                     return
                 }
                 val np = host.truePosition(parent, view, position)
@@ -302,9 +302,15 @@ internal fun ConversationGroupHook.installItemLongPressInterceptor() {
  *
  * 两个入口（performItemClick 拦截 + 监听器包装）都走这里，300ms 内同一分组只处理一次。
  */
-internal fun ConversationGroupHook.handleHeaderTap(gid: String) {
+internal fun ConversationGroupHook.handleHeaderTap(gid: String, row: View? = null) {
     // 排序模式下点击由 ReorderInPlace 的触摸层接管，这里不响应
     if (reorderMode) return
+    // 行内「已读」按钮优先：命中就标为已读，不展开/折叠
+    if (hitGroupReadButton(row)) {
+        log("分组「已读」按钮命中: $gid")
+        markGroupRead(gid)
+        return
+    }
     val now = android.os.SystemClock.uptimeMillis()
     val quickReTap = lastTapGid == gid && now - lastTapAt < 350L
     lastTapGid = gid

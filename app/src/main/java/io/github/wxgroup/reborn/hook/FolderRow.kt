@@ -45,6 +45,9 @@ private object WxColors {
     const val LIGHT_CHEVRON = 0xFFC7C7CC.toInt()
     const val DARK_CHEVRON = 0xFF5A5A5E.toInt()
     const val BADGE = 0xFFFA5151.toInt()          // 微信品牌红
+    const val READ_FG = 0xFF07C160.toInt()        // 微信品牌绿（「已读」按钮文字）
+    const val READ_BG_LIGHT = 0x1407C160          // 8% 绿，和微信浅色底的标签一个观感
+    const val READ_BG_DARK = 0x2407C160
 }
 
 // ==================================================================================
@@ -118,6 +121,30 @@ internal fun ConversationGroupHook.createFolderRow(ctx: Context, clickable: Bool
     col.addView(sub, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(ctx, 2) })
     row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
+    // 「已读」按钮：只在有未读时出现，点了把这个分组里所有未读会话标为已读。
+    // ⚠️ 不挂 OnClickListener —— 行内任何 clickable 子 View 都会吃掉 DOWN，
+    // 从按钮上起手就没法滚动列表。点击命中由 ItemIntercept 用按下坐标判定。
+    val readBtn = TextView(ctx).apply {
+        text = "已读"
+        textSize = 12f
+        includeFontPadding = false
+        maxLines = 1
+        gravity = Gravity.CENTER
+        setTextColor(WxColors.READ_FG)
+        val bg = GradientDrawable()
+        bg.shape = GradientDrawable.RECTANGLE
+        bg.cornerRadius = dp(ctx, 13).toFloat()
+        bg.setColor(if (dark) WxColors.READ_BG_DARK else WxColors.READ_BG_LIGHT)
+        background = bg
+        setPadding(dp(ctx, 10), dp(ctx, 5), dp(ctx, 10), dp(ctx, 5))
+        isClickable = false
+        isLongClickable = false
+        visibility = View.GONE
+    }
+    row.addView(readBtn, LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+    ).apply { leftMargin = dp(ctx, 8) })
+
     // 未读角标：微信同款 18dp 高红色胶囊。宽度自适应 —— 「99+」按老写法固定 18dp 会被裁字。
     val unread = TextView(ctx).apply {
         textSize = 11f
@@ -152,7 +179,7 @@ internal fun ConversationGroupHook.createFolderRow(ctx: Context, clickable: Bool
         leftMargin = dp(ctx, 4)
     })
 
-    val holder = FolderHolder(badge, name, sub, arrow, unread, back)
+    val holder = FolderHolder(badge, name, sub, arrow, unread, back, readBtn)
     row.tag = holder
     // 点击/长按不在这里处理：见 installItemClickInterceptor / installItemLongPressInterceptor
     return row
@@ -272,6 +299,13 @@ internal fun ConversationGroupHook.bindFolderRow(
         }
     } else {
         holder.unread.visibility = View.GONE
+    }
+
+    // ── 「已读」按钮 ──────────────────────────────────────────────────
+    // 只在有未读时出现；打开态也保留（组内几十条未读时，逐个会话点太慢）。
+    holder.readBtn.visibility = if (unreadCount > 0) View.VISIBLE else View.GONE
+    if (unreadCount > 0) {
+        holder.readBtn.contentDescription = "把「${group.name}」的 $unreadCount 条未读全部标为已读"
     }
 
     // 无障碍：让 TalkBack 读成「分组名，N 个成员，M 条未读」而不是把 emoji 和箭头逐个念出来

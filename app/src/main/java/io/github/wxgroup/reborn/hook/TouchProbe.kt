@@ -64,14 +64,16 @@ internal fun ConversationGroupHook.probeTouch(param: MethodHookParam) {
         if (!isOurListView(lv)) return
         val ev = param.args.getOrNull(0) as? android.view.MotionEvent ?: return
         if (ev.actionMasked != android.view.MotionEvent.ACTION_DOWN) return
-        probeDown(lv, ev.rawY)
+        probeDown(lv, ev.rawX, ev.rawY)
     } catch (t: Throwable) {
         log("按下探测异常: ${t.javaClass.simpleName}: ${t.message}")
     }
 }
 
 /** 用屏幕坐标自己判定按在哪一行，存起来给 performItemClick / performLongPress 用 */
-internal fun ConversationGroupHook.probeDown(lv: android.widget.ListView, rawY: Float) {
+internal fun ConversationGroupHook.probeDown(lv: android.widget.ListView, rawX: Float, rawY: Float) {
+    downRawX = rawX
+    downRawY = rawY
     val loc = IntArray(2)
     var idx = -1
     for (i in 0 until lv.childCount) {

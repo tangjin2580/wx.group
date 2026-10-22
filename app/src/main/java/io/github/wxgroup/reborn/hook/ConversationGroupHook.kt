@@ -240,7 +240,15 @@ class ConversationGroupHook {
     internal var downPos = -1
     internal var downChildIndex = -1
     internal var downGroupId: String? = null
+    /** 按下点的屏幕坐标（「已读」按钮这类行内热区要靠它判定） */
+    internal var downRawX = 0f
+    internal var downRawY = 0f
     internal var downLogCount = 0
+
+    /** 微信 ConversationStorage（l4）实例：懒解析，一次成功就缓存 */
+    internal var storageRef: Any? = null
+    /** 是否已经做过一次「存储解析预热」（只为把结果打进日志，方便换版本后核对） */
+    internal var storageWarmUpDone = false
 
     // ===== 长按菜单上下文 =====
     /** 最近一次长按到的会话（菜单项点击时要拿它做「添加到分组」的目标） */
@@ -412,6 +420,12 @@ class ConversationGroupHook {
                                 ?.let { mainActivity = WeakReference(it) }
                             mainActivity?.get()?.let { installConcreteBackHook(it) }
                             log("会话列表已确认: ${param.thisObject?.javaClass?.name} <- ${a.javaClass.name}")
+                            // 预热一次「已读」用的 ConversationStorage 解析：结果直接进日志，
+                            // 换微信版本后看一行日志就知道混淆名有没有变，不用真去点按钮。
+                            if (!storageWarmUpDone) {
+                                storageWarmUpDone = true
+                                mainHandler.postDelayed({ conversationStorage() }, 4000L)
+                            }
                         }
                     }
                 }

@@ -72,5 +72,6 @@ internal class FolderHolder(
     val arrow: TextView,
     val unread: TextView,    // 未读角标（红点/数字）
     val back: TextView,      // 打开态左侧返回箭头（常态 GONE）
+    val readBtn: TextView,   // 右侧「已读」按钮（有未读时才显示；不挂点击监听，见 FolderRow）
     var groupId: String? = null
 )
