@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 深色下只覆盖随昼夜变化的几项，其余共享配置仍在 AppTheme.Base：
+         状态栏/导航栏图标反色为浅色，顶部 ActionBar 用 surface 而不是品牌绿（MD3 深色规范）。 -->
+    <style name="AppTheme" parent="AppTheme.Base">
+        <item name="colorPrimary">@color/wg_surface</item>
+        <item name="colorPrimaryDark">@color/wg_page_bg</item>
+
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

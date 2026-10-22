@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- ══ 卡片 ══════════════════════════════════════════════════════ -->
+    <style name="WgCard">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:background">@drawable/bg_wg_card</item>
+        <item name="android:elevation">@dimen/wg_elevation_card</item>
+        <item name="android:layout_marginBottom">@dimen/wg_card_gap</item>
+    </style>
+
+    <!-- 可点击卡片（主入口）：带水波纹 + 按下抬升。
+         ⚠️ 必须显式改回 horizontal —— WgCard 默认是 vertical，
+         不改的话图标和文字会叠成一列（真机踩过）。 -->
+    <style name="WgCard.Entry">
+        <item name="android:orientation">horizontal</item>
+        <item name="android:background">@drawable/bg_wg_card_selectable</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:stateListAnimator">@animator/wg_lift</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">12dp</item>
+        <item name="android:paddingTop">14dp</item>
+        <item name="android:paddingBottom">14dp</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:minHeight">68dp</item>
+    </style>
+
+    <style name="WgCard.Danger">
+        <item name="android:background">@drawable/bg_wg_card_danger</item>
+    </style>
+
+    <!-- ══ 卡片内的一行 ═══════════════════════════════════════════════ -->
+    <style name="WgRow">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:minHeight">@dimen/wg_row_min_h</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:background">@drawable/bg_wg_row</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">12dp</item>
+        <item name="android:paddingTop">12dp</item>
+        <item name="android:paddingBottom">12dp</item>
+    </style>
+
+    <style name="WgDivider">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">1dp</item>
+        <item name="android:background">@color/wg_border</item>
+        <item name="android:layout_marginStart">16dp</item>
+        <item name="android:layout_marginEnd">16dp</item>
+    </style>
+
+    <!-- ══ 文本 ══════════════════════════════════════════════════════ -->
+    <style name="WgTitle">
+        <item name="android:textColor">@color/wg_text_primary</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <style name="WgRowTitle">
+        <item name="android:textColor">@color/wg_text_primary</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <style name="WgRowSub">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/wg_text_secondary</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:lineSpacingExtra">2dp</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:layout_marginTop">2dp</item>
+    </style>
+
+    <!-- 分组小标题：主要功能 / 显示偏好 / … -->
+    <style name="WgSectionLabel">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/wg_text_secondary</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.02</item>
+        <item name="android:paddingStart">8dp</item>
+        <item name="android:paddingEnd">8dp</item>
+        <item name="android:layout_marginTop">@dimen/wg_section_top</item>
+        <item name="android:layout_marginBottom">@dimen/wg_section_bottom</item>
+    </style>
+
+    <!-- ══ 左侧图标色块 ═══════════════════════════════════════════════ -->
+    <style name="WgIconChip">
+        <item name="android:layout_width">@dimen/wg_icon_size</item>
+        <item name="android:layout_height">@dimen/wg_icon_size</item>
+        <item name="android:layout_marginEnd">14dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textSize">17sp</item>
+        <item name="android:textColor">@color/wg_icon_fg</item>
+        <item name="android:background">@drawable/bg_wg_chip</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:importantForAccessibility">no</item>
+    </style>
+
+    <style name="WgIconChip.Danger">
+        <item name="android:textColor">@color/wg_danger</item>
+        <item name="android:background">@drawable/bg_wg_chip_danger</item>
+    </style>
+
+    <!-- 行尾箭头 -->
+    <style name="WgChevron">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:text">›</item>
+        <item name="android:textSize">22sp</item>
+        <item name="android:textColor">@color/wg_text_secondary</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:importantForAccessibility">no</item>
+    </style>
+
+    <!-- ══ 按钮（分组管理 / 签名页沿用）══════════════════════════════ -->
+    <style name="WgButton" parent="Widget.AppCompat.Button">
+        <item name="android:background">@drawable/bg_wg_button</item>
+        <item name="android:textColor">@android:color/white</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:stateListAnimator">@animator/wg_lift</item>
+    </style>
+
+    <style name="WgButton.Outlined">
+        <item name="android:background">@drawable/bg_wg_button_outlined</item>
+        <item name="android:textColor">@color/wg_brand</item>
+    </style>
+</resources>

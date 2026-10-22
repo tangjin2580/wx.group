@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ── 设计令牌（浅色）───────────────────────────────────────────────
+         全 App 唯一配色来源：改这里就能整体换肤，不要在布局里写死颜色。
+         深色版本见 values-night/colors.xml（同名覆盖）。
+         品牌色取微信绿 #07C160，深一档 #059669 用于按下/强调，#E8F8EF 为浅色底。 -->
+
+    <!-- 品牌 -->
+    <color name="wg_brand">#FF07C160</color>
+    <color name="wg_brand_strong">#FF059669</color>
+    <color name="wg_brand_tint">#FFE8F8EF</color>
+    <color name="wg_brand_on_tint">#FF059669</color>
+    <color name="wg_ripple_on_brand">#33FFFFFF</color>
+
+    <!-- 背景 / 容器 -->
+    <color name="wg_page_bg">#FFF8FAFC</color>
+    <color name="wg_surface">#FFFFFFFF</color>
+    <color name="wg_surface_alt">#FFF1F5F9</color>
+
+    <!-- 文字 -->
+    <color name="wg_text_primary">#FF1F2937</color>
+    <color name="wg_text_secondary">#FF64748B</color>
+
+    <!-- 描边 / 分割线 -->
+    <color name="wg_border">#FFE2E8F0</color>
+
+    <!-- 危险 -->
+    <color name="wg_danger">#FFDC2626</color>
+    <color name="wg_danger_tint">#FFFEF2F2</color>
+
+    <!-- 按下水波纹（8 位带 alpha） -->
+    <color name="wg_ripple">#14000000</color>
+
+    <!-- 图标底 / 图标前景（条目左侧圆角色块） -->
+    <color name="wg_icon_bg">#FFE8F8EF</color>
+    <color name="wg_icon_fg">#FF059669</color>
+</resources>

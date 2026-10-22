@@ -1,15 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 模块自身 App（设置/分组管理/签名编辑/排序）用的 AppCompat 主题。
+
+    <!-- 模块自身 App（设置/分组管理/签名编辑/排序）用的主题。
          仅作用于模块 App 的 Activity；不影响注入到微信的 Hook 代码。
 
          ⚠️ 必须用 DayNight：系统夜间模式是 auto（19:00–07:00 自动进深色）时，
          固定 Light 主题的窗口背景仍是白色，但代码里 isDark()（读 uiMode）判成深色，
          把文字画成白色 → 白底白字，排序页看起来就是「白屏」（实测踩过）。
-         DayNight 让窗口背景跟 uiMode 一起变深，文字与背景永远一致。 -->
-    <style name="AppTheme" parent="Theme.AppCompat.DayNight.DarkActionBar">
-        <item name="colorPrimary">@android:color/holo_green_dark</item>
-        <item name="colorPrimaryDark">@android:color/holo_green_dark</item>
-        <item name="colorAccent">@android:color/holo_green_light</item>
+         DayNight 让窗口背景跟 uiMode 一起变深，文字与背景永远一致。
+
+         状态栏/导航栏统一跟随页面背景色（wg_page_bg），图标明暗由
+         windowLightStatusBar / windowLightNavigationBar 控制（深色主题在 values-night 关掉）。
+
+         注意：values-night 里同名覆盖会【整条替换】，所以共享项都放在 AppTheme.Base，
+         AppTheme 只放随昼夜变化的几项，避免夜间丢掉 accent / 文字色等配置。 -->
+    <style name="AppTheme.Base" parent="Theme.AppCompat.DayNight.DarkActionBar">
+        <!-- 品牌色：ActionBar、开关、进度条、EditText 光标都取这里 -->
+        <item name="colorPrimary">@color/wg_brand</item>
+        <item name="colorPrimaryDark">@color/wg_brand_strong</item>
+        <item name="colorAccent">@color/wg_brand</item>
+        <item name="colorControlNormal">@color/wg_text_secondary</item>
+        <item name="colorControlActivated">@color/wg_brand</item>
+        <item name="colorControlHighlight">@color/wg_ripple</item>
+
+        <!-- 兜底文字色：没显式指定 textColor 的控件（含对话框）都用令牌 -->
+        <item name="android:textColorPrimary">@color/wg_text_primary</item>
+        <item name="android:textColorSecondary">@color/wg_text_secondary</item>
+
+        <item name="android:windowBackground">@color/wg_page_bg</item>
+        <item name="android:statusBarColor">@color/wg_page_bg</item>
+        <item name="android:navigationBarColor">@color/wg_page_bg</item>
+    </style>
+
+    <!-- 浅色：状态栏 / 导航栏是浅底 → 图标用深色 -->
+    <style name="AppTheme" parent="AppTheme.Base">
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <!-- 设置页：自带顶部应用栏（标题 + 版本），所以去掉系统 ActionBar，
+         避免出现「系统栏标题」和「页面大标题」两个重复标题。 -->
+    <style name="AppTheme.NoActionBar" parent="AppTheme">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
     </style>
 </resources>

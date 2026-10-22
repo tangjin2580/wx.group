@@ -1,27 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 分组管理：沿用同一套令牌，保证和设置页观感一致 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/wg_page_bg"
     android:orientation="vertical">
 
     <TextView
         android:id="@+id/tv_hint"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:padding="16dp"
+        style="@style/WgRowSub"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="14dp"
+        android:paddingBottom="14dp"
         android:text="@string/group_empty"
-        android:textSize="14sp" />
+        android:textSize="13sp" />
 
     <ListView
         android:id="@+id/list_groups"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:divider="@color/wg_border"
+        android:dividerHeight="1dp"
+        android:paddingBottom="8dp" />
 
     <Button
         android:id="@+id/btn_add"
+        style="@style/WgButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_margin="12dp"
+        android:layout_marginStart="@dimen/wg_content_side"
+        android:layout_marginEnd="@dimen/wg_content_side"
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="@dimen/wg_content_side"
         android:text="@string/group_add" />
 </LinearLayout>

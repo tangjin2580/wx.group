@@ -4,14 +4,18 @@ import android.app.ActivityManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
+import android.view.View
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.DecelerateInterpolator
 import android.widget.Button
 import android.widget.EditText
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
-import android.content.Intent
 import io.github.wxgroup.reborn.R
 import io.github.wxgroup.reborn.core.GroupStore
 import io.github.wxgroup.reborn.core.WxSettings
@@ -27,6 +31,11 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var swCompact: SwitchCompat
     private lateinit var swSenders: SwitchCompat
 
+    /** 同步通道卡片的当前显示状态 —— 用来避免 onResume 反复重播同一段淡入淡出 */
+    private var channelShown: Boolean? = null
+    /** 首次进入不做可见性动画，否则会从「不可见」淡入一次，看着像闪一下 */
+    private var channelAnimated = false
+
     private fun collect(): WxSettings = WxSettings(
         badgeDot = swBadgeDot.isChecked,
         hideEmptyGroups = swHideEmpty.isChecked,
@@ -37,6 +46,17 @@ class SettingsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
+
+        val version = appVersion()
+        findViewById<TextView>(R.id.tv_version).text = getString(R.string.settings_version, version)
+        findViewById<TextView>(R.id.tv_about_desc).text = getString(R.string.settings_about_desc, version)
+
+        // 系统开了「减少动效」→ 摘掉按下抬升的状态动画（时长令牌见 @integer/wg_motion_ms）
+        if (Motion.reducedMotion(this)) {
+            stripLift(R.id.btn_groups)
+            stripLift(R.id.btn_signatures)
+            stripLift(R.id.btn_fix_channel)
+        }
 
         // ── 显示偏好开关 ──────────────────────────────────────────────
         // 写入后走「镜像 + Provider 通知」通道，微信里的 Hook 2s 内拿到新值，
@@ -56,22 +76,28 @@ class SettingsActivity : AppCompatActivity() {
         swCompact.setOnCheckedChangeListener { _, _ -> persist() }
         swSenders.setOnCheckedChangeListener { _, _ -> persist() }
 
-        findViewById<Button>(R.id.btn_groups).setOnClickListener {
+        // 整行可点：点标题/说明区域也能切换开关（开关本身仍是独立控件，照常响应）
+        bindRow(R.id.row_badge_dot, swBadgeDot)
+        bindRow(R.id.row_hide_empty, swHideEmpty)
+        bindRow(R.id.row_compact, swCompact)
+        bindRow(R.id.row_senders, swSenders)
+
+        findViewById<View>(R.id.btn_groups).setOnClickListener {
             startActivity(Intent(this, GroupManageActivity::class.java))
         }
-        findViewById<Button>(R.id.btn_signatures).setOnClickListener {
+        findViewById<View>(R.id.btn_signatures).setOnClickListener {
             startActivity(Intent(this, SignatureActivity::class.java))
         }
 
         // ── 分组备份 ─────────────────────────────────────────────────
-        findViewById<Button>(R.id.btn_export).setOnClickListener { exportGroups() }
-        findViewById<Button>(R.id.btn_import).setOnClickListener { importGroupsDialog() }
+        findViewById<View>(R.id.btn_export).setOnClickListener { exportGroups() }
+        findViewById<View>(R.id.btn_import).setOnClickListener { importGroupsDialog() }
 
-        findViewById<Button>(R.id.btn_kill_wechat).setOnClickListener {
+        findViewById<View>(R.id.btn_kill_wechat).setOnClickListener {
             confirmKillWeChat()
         }
         findViewById<Button>(R.id.btn_fix_channel).setOnClickListener { provisionChannel() }
-        findViewById<Button>(R.id.btn_about).setOnClickListener {
+        findViewById<View>(R.id.btn_about).setOnClickListener {
             AlertDialog.Builder(this)
                 .setTitle(R.string.settings_about)
                 .setMessage(R.string.about_text)
@@ -80,18 +106,71 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 版本号从 PackageManager 读 —— 不开 buildConfig 特性（AGP 8 起默认关闭），
+     * 免得为了显示一行字去改构建配置。
+     */
+    private fun appVersion(): String = try {
+        @Suppress("DEPRECATION")
+        packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+    } catch (t: Throwable) {
+        ""
+    }
+
+    /** 去掉按下抬升动画（减少动效模式） */
+    private fun stripLift(id: Int) {
+        findViewById<View>(id).stateListAnimator = null
+    }
+
+    /** 设置项整行点击 = 切换开关 */
+    private fun bindRow(rowId: Int, sw: SwitchCompat) {
+        findViewById<View>(rowId).setOnClickListener { sw.toggle() }
+    }
+
     override fun onResume() {
         super.onResume()
+        val first = !channelAnimated
         refreshChannelState()
+        if (first) channelAnimated = true
     }
 
     /** 镜像文件不存在时，App 里的改动到不了微信 —— 显式提示，而不是只在日志里失败 */
     private fun refreshChannelState() {
         val ready = GroupStore.mirrorsReady()
-        findViewById<android.view.View>(R.id.tv_channel_warn).visibility =
-            if (ready) android.view.View.GONE else android.view.View.VISIBLE
-        findViewById<android.view.View>(R.id.btn_fix_channel).visibility =
-            if (ready) android.view.View.GONE else android.view.View.VISIBLE
+        val show = !ready
+        if (channelShown == show) return       // 状态没变就别重播动画
+        channelShown = show
+
+        val vis = if (show) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.tv_channel_warn).visibility = vis
+        findViewById<View>(R.id.btn_fix_channel).visibility = vis
+        toggleCard(findViewById(R.id.card_channel), show)
+    }
+
+    /** 卡片显示/隐藏：200ms 淡入淡出；减少动效或首次进入时直接切换 */
+    private fun toggleCard(card: View, visible: Boolean) {
+        card.animate().cancel()
+        if (!channelAnimated || Motion.reducedMotion(this)) {
+            card.alpha = 1f
+            card.visibility = if (visible) View.VISIBLE else View.GONE
+            return
+        }
+        if (visible) {
+            card.alpha = 0f
+            card.visibility = View.VISIBLE
+            card.animate()
+                .alpha(1f)
+                .setDuration(Motion.DURATION_MS)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+        } else {
+            card.animate()
+                .alpha(0f)
+                .setDuration(Motion.DURATION_MS)
+                .setInterpolator(AccelerateInterpolator())
+                .withEndAction { card.visibility = View.GONE }
+                .start()
+        }
     }
 
     private fun provisionChannel() {

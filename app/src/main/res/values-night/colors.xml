@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ── 设计令牌（深色）───────────────────────────────────────────────
+         只覆盖与浅色不同的项，键名与 values/colors.xml 一一对应。
+         品牌绿保持 #07C160（在深色底上对比度足够，且和微信一致）。 -->
+
+    <color name="wg_brand">#FF07C160</color>
+    <color name="wg_brand_strong">#FF05A050</color>
+    <color name="wg_brand_tint">#FF12352A</color>
+    <color name="wg_brand_on_tint">#FF6EE7A8</color>
+    <color name="wg_ripple_on_brand">#33FFFFFF</color>
+
+    <color name="wg_page_bg">#FF0E1626</color>
+    <color name="wg_surface">#FF172032</color>
+    <color name="wg_surface_alt">#FF1F2A3F</color>
+
+    <color name="wg_text_primary">#FFE6EDF7</color>
+    <color name="wg_text_secondary">#FF94A3B8</color>
+
+    <color name="wg_border">#FF26334A</color>
+
+    <color name="wg_danger">#FFEF4444</color>
+    <color name="wg_danger_tint">#FF3A1519</color>
+
+    <color name="wg_ripple">#1FFFFFFF</color>
+
+    <color name="wg_icon_bg">#FF12352A</color>
+    <color name="wg_icon_fg">#FF34D399</color>
+</resources>

@@ -32,6 +32,33 @@
     <string name="settings_hint">本模块接管微信会话列表，在列表顶部插入可点开的「收纳组」。
 使用前请在「微信签名配置」中填入你手机微信版本对应的类/方法签名，否则分组不会生效。</string>
 
+    <!-- ── 设置页改版（MD3 卡片式）新增文案 ───────────────────────────── -->
+    <string name="settings_guide_title">使用前必读</string>
+    <string name="settings_section_main">主要功能</string>
+    <string name="settings_section_danger">危险操作</string>
+    <string name="settings_version">v%1$s · LSPosed 模块</string>
+
+    <string name="settings_entry_groups_desc">新建、重命名、置顶、免打扰、管理成员</string>
+    <string name="settings_entry_signatures_desc">按你的微信版本补全 Hook 方法签名</string>
+
+    <string name="settings_badge_dot_desc">未读只显示小红点，不显示具体数字</string>
+    <string name="settings_hide_empty_desc">会话列表里没有成员的分组自动隐藏</string>
+    <string name="settings_compact_desc">收纳组行更矮，一屏能显示更多会话</string>
+    <string name="settings_senders_desc">组行副标题显示最近未读消息的发送者</string>
+
+    <string name="settings_export_desc">把全部分组导出为 JSON 并复制到剪贴板</string>
+    <string name="settings_import_desc">粘贴 JSON，整表替换当前分组</string>
+    <string name="settings_kill_wechat_desc">改完配置后需要重启微信才会生效</string>
+    <string name="settings_about_desc">版本 %1$s · 所有数据只保存在本机</string>
+
+    <!-- 条目左侧图标用的单字（纯装饰，已设 importantForAccessibility=no） -->
+    <string name="wg_icon_groups">组</string>
+    <string name="wg_icon_signature">签</string>
+    <string name="wg_icon_export">导</string>
+    <string name="wg_icon_import">入</string>
+    <string name="wg_icon_kill">停</string>
+    <string name="wg_icon_about">关</string>
+
     <string name="group_manage_title">分组管理</string>
     <string name="group_add">新建分组</string>
     <string name="group_name_hint">分组名称</string>

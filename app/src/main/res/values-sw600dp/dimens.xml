@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 平板 / 大屏：内容两侧留白加大，避免卡片被拉成超宽长条 -->
+    <dimen name="wg_content_side">32dp</dimen>
+    <dimen name="wg_card_gap">12dp</dimen>
+</resources>

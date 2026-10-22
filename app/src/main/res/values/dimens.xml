@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ── 尺寸 / 圆角 / 间距令牌 ─────────────────────────────────────── -->
+
+    <!-- 圆角：卡片 16dp、行 12dp、按钮 14dp（MD3 的 12–16dp 区间） -->
+    <dimen name="wg_radius_card">16dp</dimen>
+    <dimen name="wg_radius_row">12dp</dimen>
+    <dimen name="wg_radius_btn">14dp</dimen>
+    <dimen name="wg_radius_chip">12dp</dimen>
+
+    <!-- 页面左右留白（平板见 values-sw600dp） -->
+    <dimen name="wg_content_side">16dp</dimen>
+
+    <!-- 纵向节奏：刻意压得比原来紧，减少无意义的留白 -->
+    <dimen name="wg_card_gap">10dp</dimen>
+    <dimen name="wg_section_top">14dp</dimen>
+    <dimen name="wg_section_bottom">6dp</dimen>
+    <dimen name="wg_content_bottom">24dp</dimen>
+
+    <!-- 组件尺寸 -->
+    <dimen name="wg_row_min_h">56dp</dimen>
+    <dimen name="wg_icon_size">40dp</dimen>
+    <dimen name="wg_top_bar_h">64dp</dimen>
+
+    <!-- 阴影高度（配合 stateListAnimator 做 200ms 抬升） -->
+    <dimen name="wg_elevation_card">1.5dp</dimen>
+    <dimen name="wg_elevation_card_pressed">5dp</dimen>
+
+    <!-- 动效时长（180–250ms 区间取中） -->
+    <integer name="wg_motion_ms">200</integer>
+</resources>

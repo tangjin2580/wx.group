@@ -1,129 +1,437 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- 设置页：卡片式（MD3 风格）
+     结构：顶部应用栏 → 说明卡 → 主入口卡 ×2 → 显示偏好设置列表 → 备份 → 危险操作 → 关于
+     所有 id 与旧版一致，SettingsActivity 的业务逻辑不用改；
+     颜色/圆角/间距全部走 values/colors.xml + dimens.xml + styles.xml 的令牌。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/wg_page_bg">
 
+    <!-- ══ 顶部应用栏（自带，主题已关掉系统 ActionBar，避免标题重复）══ -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="@dimen/wg_top_bar_h"
+        android:gravity="center_vertical"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:paddingStart="@dimen/wg_content_side"
+        android:paddingEnd="@dimen/wg_content_side">
 
         <TextView
+            style="@style/WgTitle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/app_name"
-            android:textSize="22sp"
+            android:textSize="20sp"
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/tv_version"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/settings_hint"
-            android:textSize="14sp" />
-
-        <Button
-            android:id="@+id/btn_groups"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/settings_groups" />
-
-        <Button
-            android:id="@+id/btn_signatures"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/settings_signatures" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/settings_display_title"
-            android:textSize="16sp"
-            android:textStyle="bold" />
-
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/sw_badge_dot"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/settings_badge_dot" />
-
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/sw_hide_empty"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/settings_hide_empty" />
-
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/sw_compact"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/settings_compact" />
-
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/sw_senders"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/settings_senders" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/settings_backup_title"
-            android:textSize="16sp"
-            android:textStyle="bold" />
-
-        <Button
-            android:id="@+id/btn_export"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/settings_export" />
-
-        <Button
-            android:id="@+id/btn_import"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/settings_import" />
-
-        <TextView
-            android:id="@+id/tv_channel_warn"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/settings_channel_warn"
-            android:textColor="#E53935"
-            android:visibility="gone" />
-
-        <Button
-            android:id="@+id/btn_fix_channel"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/settings_channel_fix"
-            android:visibility="gone" />
-
-        <Button
-            android:id="@+id/btn_kill_wechat"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/settings_kill_wechat" />
-
-        <Button
-            android:id="@+id/btn_about"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/settings_about" />
+            android:layout_marginTop="2dp"
+            android:includeFontPadding="false"
+            android:textColor="@color/wg_text_secondary"
+            android:textSize="12sp" />
     </LinearLayout>
-</ScrollView>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:overScrollMode="ifContentScrolls"
+        android:paddingBottom="@dimen/wg_content_bottom">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/wg_content_side"
+            android:paddingEnd="@dimen/wg_content_side">
+
+            <!-- ══ 说明卡 ═══════════════════════════════════════════════ -->
+            <LinearLayout
+                style="@style/WgCard"
+                android:padding="16dp">
+
+                <TextView
+                    style="@style/WgTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/settings_guide_title"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    style="@style/WgRowSub"
+                    android:layout_marginTop="6dp"
+                    android:text="@string/settings_hint"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <!-- ══ 同步通道告警（未就绪才显示）═════════════════════════ -->
+            <LinearLayout
+                android:id="@+id/card_channel"
+                style="@style/WgCard.Danger"
+                android:padding="16dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/tv_channel_warn"
+                    style="@style/WgTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:lineSpacingExtra="2dp"
+                    android:text="@string/settings_channel_warn"
+                    android:textColor="@color/wg_danger"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/btn_fix_channel"
+                    style="@style/WgButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/settings_channel_fix" />
+            </LinearLayout>
+
+            <!-- ══ 主要功能 ═════════════════════════════════════════════ -->
+            <TextView
+                style="@style/WgSectionLabel"
+                android:text="@string/settings_section_main" />
+
+            <LinearLayout
+                android:id="@+id/btn_groups"
+                style="@style/WgCard.Entry">
+
+                <TextView
+                    style="@style/WgIconChip"
+                    android:text="@string/wg_icon_groups" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/WgRowTitle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_groups"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        style="@style/WgRowSub"
+                        android:text="@string/settings_entry_groups_desc" />
+                </LinearLayout>
+
+                <TextView style="@style/WgChevron" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/btn_signatures"
+                style="@style/WgCard.Entry">
+
+                <TextView
+                    style="@style/WgIconChip"
+                    android:text="@string/wg_icon_signature" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/WgRowTitle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_signatures"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        style="@style/WgRowSub"
+                        android:text="@string/settings_entry_signatures_desc" />
+                </LinearLayout>
+
+                <TextView style="@style/WgChevron" />
+            </LinearLayout>
+
+            <!-- ══ 显示偏好（微信内即时生效）════════════════════════════ -->
+            <TextView
+                style="@style/WgSectionLabel"
+                android:text="@string/settings_display_title" />
+
+            <LinearLayout style="@style/WgCard">
+
+                <LinearLayout
+                    android:id="@+id/row_badge_dot"
+                    style="@style/WgRow">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="10dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/WgRowTitle"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_badge_dot" />
+
+                        <TextView
+                            style="@style/WgRowSub"
+                            android:text="@string/settings_badge_dot_desc" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/sw_badge_dot"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical" />
+                </LinearLayout>
+
+                <View style="@style/WgDivider" />
+
+                <LinearLayout
+                    android:id="@+id/row_hide_empty"
+                    style="@style/WgRow">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="10dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/WgRowTitle"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_hide_empty" />
+
+                        <TextView
+                            style="@style/WgRowSub"
+                            android:text="@string/settings_hide_empty_desc" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/sw_hide_empty"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical" />
+                </LinearLayout>
+
+                <View style="@style/WgDivider" />
+
+                <LinearLayout
+                    android:id="@+id/row_compact"
+                    style="@style/WgRow">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="10dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/WgRowTitle"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_compact" />
+
+                        <TextView
+                            style="@style/WgRowSub"
+                            android:text="@string/settings_compact_desc" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/sw_compact"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical" />
+                </LinearLayout>
+
+                <View style="@style/WgDivider" />
+
+                <LinearLayout
+                    android:id="@+id/row_senders"
+                    style="@style/WgRow">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="10dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/WgRowTitle"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_senders" />
+
+                        <TextView
+                            style="@style/WgRowSub"
+                            android:text="@string/settings_senders_desc" />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/sw_senders"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- ══ 分组备份 ═════════════════════════════════════════════ -->
+            <TextView
+                style="@style/WgSectionLabel"
+                android:text="@string/settings_backup_title" />
+
+            <LinearLayout style="@style/WgCard">
+
+                <LinearLayout
+                    android:id="@+id/btn_export"
+                    style="@style/WgRow">
+
+                    <TextView
+                        style="@style/WgIconChip"
+                        android:text="@string/wg_icon_export" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/WgRowTitle"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_export" />
+
+                        <TextView
+                            style="@style/WgRowSub"
+                            android:text="@string/settings_export_desc" />
+                    </LinearLayout>
+
+                    <TextView style="@style/WgChevron" />
+                </LinearLayout>
+
+                <View style="@style/WgDivider" />
+
+                <LinearLayout
+                    android:id="@+id/btn_import"
+                    style="@style/WgRow">
+
+                    <TextView
+                        style="@style/WgIconChip"
+                        android:text="@string/wg_icon_import" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/WgRowTitle"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_import" />
+
+                        <TextView
+                            style="@style/WgRowSub"
+                            android:text="@string/settings_import_desc" />
+                    </LinearLayout>
+
+                    <TextView style="@style/WgChevron" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- ══ 危险操作（独立分区 + 确认弹窗）══════════════════════ -->
+            <TextView
+                style="@style/WgSectionLabel"
+                android:text="@string/settings_section_danger" />
+
+            <LinearLayout
+                style="@style/WgCard.Danger">
+
+                <LinearLayout
+                    android:id="@+id/btn_kill_wechat"
+                    style="@style/WgRow">
+
+                    <TextView
+                        style="@style/WgIconChip.Danger"
+                        android:text="@string/wg_icon_kill" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/WgRowTitle"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_kill_wechat"
+                            android:textColor="@color/wg_danger" />
+
+                        <TextView
+                            style="@style/WgRowSub"
+                            android:text="@string/settings_kill_wechat_desc" />
+                    </LinearLayout>
+
+                    <TextView style="@style/WgChevron" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- ══ 关于 ═════════════════════════════════════════════════ -->
+            <TextView
+                style="@style/WgSectionLabel"
+                android:text="@string/settings_about" />
+
+            <LinearLayout style="@style/WgCard">
+
+                <LinearLayout
+                    android:id="@+id/btn_about"
+                    style="@style/WgRow">
+
+                    <TextView
+                        style="@style/WgIconChip"
+                        android:text="@string/wg_icon_about" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/WgRowTitle"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_about" />
+
+                        <TextView
+                            android:id="@+id/tv_about_desc"
+                            style="@style/WgRowSub" />
+                    </LinearLayout>
+
+                    <TextView style="@style/WgChevron" />
+                </LinearLayout>
+            </LinearLayout>
+
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

@@ -14,11 +14,14 @@
         <!-- 模块入口通过 META-INF/xposed/java_init.list 声明（libxposed 102），
              不再使用 legacy 的 xposedmodule meta-data / assets/xposed_init。 -->
 
-        <!-- ===== 设置入口 ===== -->
+        <!-- ===== 设置入口 =====
+             用 NoActionBar 主题：页面自带顶部应用栏（标题 + 版本），
+             去掉系统 ActionBar 避免和页面里的标题重复。 -->
         <activity
             android:name=".ui.SettingsActivity"
             android:exported="true"
-            android:label="@string/app_name">
+            android:label="@string/app_name"
+            android:theme="@style/AppTheme.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
