@@ -84,7 +84,7 @@ internal fun ConversationGroupHook.createFolderRow(ctx: Context, clickable: Bool
         // 左边只留 8dp：剩下的 8dp 由「色条(3dp) + 间距(5dp)」补上，
         // 图标左边缘仍然落在 16dp —— 和微信会话行的头像对齐，不会显得缩进了一截。
         setPadding(dp(ctx, 8), dp(ctx, 8), dp(ctx, 16), dp(ctx, 8))
-        setBackgroundColor(if (dark) WxColors.DARK_ROW else WxColors.LIGHT_ROW)
+        // 底色由外层 wrapper 统一给（行本身透明），避免两处各画一层。
         // 关键：ListView 分支下**不要**让收纳组行自己 clickable。
         // 行一旦 clickable 就会成为触摸目标，把 DOWN 吃掉：
         //   · ListView 收不到 DOWN → 从这一行上起手拖动无法滚动列表
@@ -102,17 +102,17 @@ internal fun ConversationGroupHook.createFolderRow(ctx: Context, clickable: Bool
         descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
     }
 
-    // 左侧强调色条：3dp 宽、和图标等高，颜色 = 主题色板里的单组色。
-    // 这是「分组」最主要的视觉标识 —— 比大面积彩色背景轻得多，也和微信的行结构不冲突。
+    // 左侧竖向色条：分组唯一的「大面积」色彩来源（宽 3dp，长 = 图标的 0.66），
+    // 圆角取宽度的一半做成胶囊。行底色保持中性白，不再整行铺色。
     val bar = View(ctx).apply {
         val bg = GradientDrawable()
         bg.shape = GradientDrawable.RECTANGLE
-        bg.cornerRadius = dp(ctx, 2).toFloat()
+        bg.cornerRadius = dp(ctx, 3).toFloat() / 2f   // 圆角 = 宽度的一半 → 胶囊
         bg.setColor(WxColors.READ_FG)
         background = bg
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
     }
-    row.addView(bar, LinearLayout.LayoutParams(dp(ctx, 3), dp(ctx, 34)).apply { rightMargin = dp(ctx, 5) })
+    row.addView(bar, LinearLayout.LayoutParams(dp(ctx, 3), dp(ctx, 32)).apply { rightMargin = dp(ctx, 5) })
 
     // 打开态的返回箭头：放最左边（页面标题栏语义），平时 GONE。
     // 整行点击本身就是「返回」，这里只做视觉引导 + 加大触控区域。
@@ -216,10 +216,38 @@ internal fun ConversationGroupHook.createFolderRow(ctx: Context, clickable: Bool
         leftMargin = dp(ctx, 4)
     })
 
-    val holder = FolderHolder(icon, name, sub, arrow, unread, back, readBtn, bar)
-    row.tag = holder
+    // 行间分隔线：只画一条 0.5dp 的极浅灰线，左端对齐图标（16dp），右端通到屏幕边 ——
+    // 和微信会话行的分割线一个位置、一个观感。分组之间靠它分开，不再靠「底色深浅差」。
+    val divider = View(ctx).apply {
+        val bg = GradientDrawable()
+        bg.shape = GradientDrawable.RECTANGLE
+        bg.setColor(if (dark) 0xFF262626.toInt() else 0xFFEDEDED.toInt())
+        background = bg
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+    val divH = maxOf(1, (ctx.resources.displayMetrics.density * 0.5f).toInt())
+
+    // 外层容器（垂直）：内容行 + 分隔线。它是 getView 真正返回的那一个 View，
+    // 也是背景色的承载体 —— 内容行保持透明，避免两层底色叠加出脏色。
+    val wrapper = LinearLayout(ctx).apply {
+        orientation = LinearLayout.VERTICAL
+        setBackgroundColor(if (dark) WxColors.DARK_ROW else WxColors.LIGHT_ROW)
+        isEnabled = true
+        isClickable = clickable
+        isLongClickable = clickable
+        descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+    }
+    wrapper.addView(row, LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+    ))
+    wrapper.addView(divider, LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT, divH
+    ).apply { marginStart = dp(ctx, 16) })
+
+    val holder = FolderHolder(icon, name, sub, arrow, unread, back, readBtn, bar, row, divider)
+    wrapper.tag = holder
     // 点击/长按不在这里处理：见 installItemClickInterceptor / installItemLongPressInterceptor
-    return row
+    return wrapper
 }
 
 /**
@@ -236,7 +264,8 @@ internal fun ConversationGroupHook.createSectionRow(ctx: Context): View {
         includeFontPadding = false
         gravity = Gravity.CENTER_VERTICAL
         setTextColor(if (dark) WxColors.DARK_SUB else WxColors.LIGHT_SUB)
-        setPadding(dp(ctx, 17), dp(ctx, 12), dp(ctx, 16), dp(ctx, 6))
+        // 上下留白压紧（10/4），把省下来的空间还给会话本身
+        setPadding(dp(ctx, 17), dp(ctx, 10), dp(ctx, 16), dp(ctx, 4))
         setBackgroundColor(if (dark) WxColors.DARK_ROW else WxColors.LIGHT_ROW)
         // 小节行不参与点击：tag 用常量串，convertView 复用时靠它认出来
         tag = SECTION_TAG
@@ -281,7 +310,9 @@ internal fun ConversationGroupHook.bindFolderRow(
         else -> 48
     }
     val vPad = if (compact) 6 else 8
-    view.setPadding(dp(ctx, 16), dp(ctx, vPad), dp(ctx, 16), dp(ctx, vPad))
+    // 内边距给内容行（外层 wrapper 不带 padding），左侧 8dp + 色条 3dp + 间距 5dp = 16dp，
+    // 图标左边缘与微信会话行头像对齐。
+    holder.content.setPadding(dp(ctx, 8), dp(ctx, vPad), dp(ctx, 16), dp(ctx, vPad))
 
     holder.name.textSize = when {
         opened -> 17f
@@ -291,6 +322,9 @@ internal fun ConversationGroupHook.bindFolderRow(
     // 标题栏语义下加粗；列表里的行保持常规字重（微信会话标题不加粗）
     holder.name.setTypeface(null, if (opened) Typeface.BOLD else Typeface.NORMAL)
     holder.sub.textSize = if (compact) 13f else 14f
+    // 行间距：标题与副标题之间留一点呼吸，但不撑高行高（行高由 48dp 图标 + 8dp 上下内边距决定）
+    holder.name.setLineSpacing(0f, 1.05f)
+    holder.sub.setLineSpacing(0f, 1.05f)
 
     (holder.icon.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
         if (lp.width != dp(ctx, iconSize) || lp.height != dp(ctx, iconSize)) {
@@ -300,12 +334,14 @@ internal fun ConversationGroupHook.bindFolderRow(
         }
     }
     holder.icon.textSize = iconSize * 0.58f
-    (holder.icon.background as? GradientDrawable)?.cornerRadius = dp(ctx, iconSize) * 0.22f
+    // 图标容器圆角统一取「边长的 1/4」：48dp→12dp、44dp→11dp、40dp→10dp，
+    // 三档看起来是同一枚控件缩放，不会出现圆角忽大忽小。
+    (holder.icon.background as? GradientDrawable)?.cornerRadius = dp(ctx, iconSize) * 0.25f
     holder.icon.text = group.icon.ifBlank { GroupTheme.iconOf(group.id) }
 
-    // 色条：高度跟着图标缩（约 0.72 倍），颜色 = 该分组的强调色
+    // 色条：长度 = 图标的 0.66（48dp→32dp），宽 3dp，颜色 = 该分组的强调色
     (holder.bar.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
-        val h = dp(ctx, (iconSize * 0.72f).toInt())
+        val h = dp(ctx, (iconSize * 0.66f).toInt())
         if (lp.height != h) {
             lp.height = h
             holder.bar.layoutParams = lp
@@ -335,25 +371,30 @@ internal fun ConversationGroupHook.bindFolderRow(
     // 排序模式下右侧箭头换成「≡」，提示当前可以拖动
     if (!opened) holder.arrow.text = if (reorderMode) "≡" else "›"
 
-    // 行底色 = 主题行底色 + 一点点强调色（7%）。
-    // 刻意压得很低：大面积彩色底会显得「贴了一层」，低饱和只留色相暗示，仍像微信自己的行。
-    // 打开态（二级页面标题栏）用 selected 打底、混到 20%，区分度够又不刺眼。
+    // ── 行底色：普通状态一律中性（白 / 深色底），**不给整行铺色** ──────
+    // 只有「当前打开的分组」用主题的浅色背景（selectedBackground 再混一点本组强调色），
+    // 这样一屏里永远只有一行带底色，既看得出选中，也不会变成一块彩色面板。
     view.setBackgroundColor(
-        if (opened) GroupTheme.blend(palette.selected, accent, 0.20f)
-        else GroupTheme.blend(palette.groupBg, accent, 0.07f)
+        if (opened) GroupTheme.blend(palette.selectedBackground, accent, 0.14f)
+        else palette.normalBackground
     )
+    // 分隔线：极浅灰，左端对齐图标
+    (holder.divider.background as? GradientDrawable)?.setColor(palette.divider)
 
     // ── 文字 / 图标容器 / 箭头：全部来自同一套色板 ────────────────────
-    holder.name.setTextColor(palette.title)
-    holder.sub.setTextColor(palette.sub)
+    holder.name.setTextColor(palette.textPrimary)
+    holder.sub.setTextColor(palette.textSecondary)
+    // 箭头统一用最弱的灰（theme.disabled），弱化它的存在感
     holder.arrow.setTextColor(palette.disabled)
     holder.back.setTextColor(palette.disabled)
+    // 图标容器 = 主题浅色版本 + 一点本组强调色，和左侧色条是同一个色系
     (holder.icon.background as? GradientDrawable)?.setColor(
-        GroupTheme.blend(palette.iconBg, accent, 0.22f)
+        GroupTheme.blend(palette.iconBackground, accent, 0.22f)
     )
-    holder.readBtn.setTextColor(palette.primary)
+    // 「已读」胶囊：低饱和浅底 + 本组强调色文字，不做大色块
+    holder.readBtn.setTextColor(accent)
     (holder.readBtn.background as? GradientDrawable)?.setColor(
-        GroupTheme.blend(palette.groupBg, palette.primary, 0.14f)
+        GroupTheme.blend(palette.normalBackground, accent, 0.10f)
     )
 
     // ── 未读角标 ─────────────────────────────────────────────────────

@@ -78,6 +78,8 @@ internal class FolderHolder(
     val unread: TextView,    // 未读角标（红点/数字）
     val back: TextView,      // 打开态左侧返回箭头（常态 GONE）
     val readBtn: TextView,   // 右侧「已读」按钮（有未读时才显示；不挂点击监听，见 FolderRow）
-    val bar: View,           // 左侧强调色条（主题/单组色）
+    val bar: View,           // 左侧竖向色条（主题/单组色）
+    val content: View,       // 水平内容行（外层 wrapper 里去掉分隔线的那部分）
+    val divider: View,       // 行下方 0.5dp 分隔线
     var groupId: String? = null
 )

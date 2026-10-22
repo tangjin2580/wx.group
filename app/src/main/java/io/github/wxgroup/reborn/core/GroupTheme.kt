@@ -50,29 +50,43 @@ object GroupTheme {
     // 色板：一套主题 = 一组完整语义色（浅/深各一份）
     // ==================================================================================
 
+    // ── 中性基底：所有主题共用 ──────────────────────────────────────────
+    // “群组区块不能像贴了一块彩色面板”——所以行底色/分隔线/正文色一律是**微信原生那套中性色**，
+    // 主题只负责「色条 + 图标容器 + 选中态」这三处，深浅色也只在这里切换。
+    private const val ROW_LIGHT = 0xFFFFFFFF.toInt()      // 微信浅色会话行底
+    private const val ROW_DARK = 0xFF191919.toInt()       // 微信深色会话行底
+    private const val DIVIDER_LIGHT = 0xFFEDEDED.toInt()  // 比微信原生的线再浅一档，只做区分
+    private const val DIVIDER_DARK = 0xFF262626.toInt()
+    private const val TEXT_LIGHT = 0xFF191919.toInt()     // 微信标题色
+    private const val TEXT_DARK = 0xFFD6D6D6.toInt()
+    private const val SUB_LIGHT = 0xFF9A9A9A.toInt()      // 微信摘要色
+    private const val SUB_DARK = 0xFF8A8A8A.toInt()
+    private const val DISABLED_LIGHT = 0xFFC7C7CC.toInt() // 箭头/次要装饰
+    private const val DISABLED_DARK = 0xFF5A5A5E.toInt()
+
     /**
-     * 完整配色。字段名就是语义，取色时不要自己算 —— 需要「同色系更浅/更深」用 [Palette.tint]。
+     * 完整配色。字段名就是语义，取色时不要自己算 —— 需要「同色系更浅/更深」用 [blend]。
      *
-     * @param primary  主题主色（按钮、选中态文字）
-     * @param accent   左侧强调色（色条 / 图标边框），同色系里饱和度最高的一档
-     * @param groupBg  群组行底色（**低饱和**：主色混入大量底色，只留一点色相）
-     * @param iconBg   图标容器背景
-     * @param title    主要文字
-     * @param sub      辅助文字
-     * @param divider  分隔线
-     * @param selected 选中/打开态背景
-     * @param cardBg   卡片背景（模块 App 内的预览卡）
-     * @param disabled 禁用态
+     * @param primary            主题主色（模块 App 按钮、已读胶囊文字）
+     * @param accent             强调色基准：左侧色条取**分组自己的色板色**，这里给兜底值
+     * @param iconBackground     图标容器背景（主题色的浅色版本）
+     * @param selectedBackground 选中/打开态的浅色背景（只有当前分组会用）
+     * @param normalBackground   普通状态的**中性**背景（白 / 微信深色底），不铺彩色
+     * @param textPrimary        群组标题
+     * @param textSecondary      成员数量等辅助信息
+     * @param divider            极浅分隔线
+     * @param cardBg             卡片背景（模块 App 内的预览卡）
+     * @param disabled           箭头等需要弱化的元素
      */
     data class Palette(
         val primary: Int,
         val accent: Int,
-        val groupBg: Int,
-        val iconBg: Int,
-        val title: Int,
-        val sub: Int,
+        val iconBackground: Int,
+        val selectedBackground: Int,
+        val normalBackground: Int,
+        val textPrimary: Int,
+        val textSecondary: Int,
         val divider: Int,
-        val selected: Int,
         val cardBg: Int,
         val disabled: Int
     )
@@ -113,213 +127,162 @@ object GroupTheme {
     fun iconOf(groupId: String): String =
         ICONS[(groupId.hashCode() and Int.MAX_VALUE) % ICONS.size]
 
+    /**
+     * 统一的浅色基底：所有主题共用一套中性色（白底 + 极浅分隔线 + 微信原生字色）。
+     * 主题只改 accent / iconBackground / selectedBackground —— 这样切主题时
+     * 「布局、尺寸、间距、正文可读性」完全不变，只是重点色换了个色相。
+     */
+    private fun lightPalette(
+        primary: Int,
+        accent: Int,
+        iconBackground: Int,
+        selectedBackground: Int
+    ) = Palette(
+        primary = primary,
+        accent = accent,
+        iconBackground = iconBackground,
+        selectedBackground = selectedBackground,
+        normalBackground = ROW_LIGHT,
+        textPrimary = TEXT_LIGHT,
+        textSecondary = SUB_LIGHT,
+        divider = DIVIDER_LIGHT,
+        cardBg = 0xFFFFFFFF.toInt(),
+        disabled = DISABLED_LIGHT
+    )
+
+    /** 深色基底：行底/分隔线/字色同样统一，只有主题三色随主题变 */
+    private fun darkPalette(
+        primary: Int,
+        accent: Int,
+        iconBackground: Int,
+        selectedBackground: Int
+    ) = Palette(
+        primary = primary,
+        accent = accent,
+        iconBackground = iconBackground,
+        selectedBackground = selectedBackground,
+        normalBackground = ROW_DARK,
+        textPrimary = TEXT_DARK,
+        textSecondary = SUB_DARK,
+        divider = DIVIDER_DARK,
+        cardBg = 0xFF1F1F1F.toInt(),
+        disabled = DISABLED_DARK
+    )
+
     // ── 1. 微信经典绿 ──────────────────────────────────────────────────
-    private val GREEN_LIGHT = Palette(
+    private val GREEN_LIGHT = lightPalette(
         primary = 0xFF07C160.toInt(),
         accent = 0xFF07C160.toInt(),
-        groupBg = 0xFFF6FBF8.toInt(),
-        iconBg = 0xFFE8F8EF.toInt(),
-        title = 0xFF191919.toInt(),
-        sub = 0xFF9A9A9A.toInt(),
-        divider = 0xFFEDEDED.toInt(),
-        selected = 0xFFE8F8EF.toInt(),
-        cardBg = 0xFFFFFFFF.toInt(),
-        disabled = 0xFFC7C7CC.toInt()
+        iconBackground = 0xFFE8F8EF.toInt(),
+        selectedBackground = 0xFFF2FBF6.toInt()
     )
-    private val GREEN_DARK = Palette(
+    private val GREEN_DARK = darkPalette(
         primary = 0xFF07C160.toInt(),
         accent = 0xFF2BCB70.toInt(),
-        groupBg = 0xFF181D1A.toInt(),
-        iconBg = 0xFF1E3327.toInt(),
-        title = 0xFFD6D6D6.toInt(),
-        sub = 0xFF8A8A8A.toInt(),
-        divider = 0xFF262626.toInt(),
-        selected = 0xFF1E3327.toInt(),
-        cardBg = 0xFF1F1F1F.toInt(),
-        disabled = 0xFF5A5A5E.toInt()
+        iconBackground = 0xFF1E3327.toInt(),
+        selectedBackground = 0xFF1B2A22.toInt()
     )
 
     // ── 2. 极简灰白 ────────────────────────────────────────────────────
-    private val MINIMAL_LIGHT = Palette(
+    private val MINIMAL_LIGHT = lightPalette(
         primary = 0xFF64748B.toInt(),
         accent = 0xFF94A3B8.toInt(),
-        groupBg = 0xFFFAFAFB.toInt(),
-        iconBg = 0xFFF1F3F5.toInt(),
-        title = 0xFF1F2937.toInt(),
-        sub = 0xFF8A94A6.toInt(),
-        divider = 0xFFEDEFF2.toInt(),
-        selected = 0xFFEFF1F4.toInt(),
-        cardBg = 0xFFFFFFFF.toInt(),
-        disabled = 0xFFC7CBD1.toInt()
+        iconBackground = 0xFFF1F3F5.toInt(),
+        selectedBackground = 0xFFF7F8F9.toInt()
     )
-    private val MINIMAL_DARK = Palette(
+    private val MINIMAL_DARK = darkPalette(
         primary = 0xFF94A3B8.toInt(),
         accent = 0xFF64748B.toInt(),
-        groupBg = 0xFF1A1C1F.toInt(),
-        iconBg = 0xFF262A2F.toInt(),
-        title = 0xFFE2E6EA.toInt(),
-        sub = 0xFF8C939C.toInt(),
-        divider = 0xFF2A2E33.toInt(),
-        selected = 0xFF262A2F.toInt(),
-        cardBg = 0xFF202226.toInt(),
-        disabled = 0xFF5A5E64.toInt()
+        iconBackground = 0xFF262A2F.toInt(),
+        selectedBackground = 0xFF212428.toInt()
     )
 
     // ── 3. 莫兰迪柔彩 ──────────────────────────────────────────────────
-    private val MORANDI_LIGHT = Palette(
+    private val MORANDI_LIGHT = lightPalette(
         primary = 0xFF9AA891.toInt(),
         accent = 0xFFB49B8E.toInt(),
-        groupBg = 0xFFF8F7F5.toInt(),
-        iconBg = 0xFFEFECE7.toInt(),
-        title = 0xFF3A3733.toInt(),
-        sub = 0xFF908B84.toInt(),
-        divider = 0xFFEAE7E2.toInt(),
-        selected = 0xFFEBE6DF.toInt(),
-        cardBg = 0xFFFFFFFF.toInt(),
-        disabled = 0xFFC8C3BC.toInt()
+        iconBackground = 0xFFEFECE7.toInt(),
+        selectedBackground = 0xFFF7F5F2.toInt()
     )
-    private val MORANDI_DARK = Palette(
+    private val MORANDI_DARK = darkPalette(
         primary = 0xFFA9B6A0.toInt(),
         accent = 0xFFC0A79A.toInt(),
-        groupBg = 0xFF1C1B19.toInt(),
-        iconBg = 0xFF2C2A26.toInt(),
-        title = 0xFFDFDAD3.toInt(),
-        sub = 0xFF938D85.toInt(),
-        divider = 0xFF2E2C28.toInt(),
-        selected = 0xFF2C2A26.toInt(),
-        cardBg = 0xFF232120.toInt(),
-        disabled = 0xFF5C5852.toInt()
+        iconBackground = 0xFF2C2A26.toInt(),
+        selectedBackground = 0xFF241F1C.toInt()
     )
 
     // ── 4. 海盐薄荷 ────────────────────────────────────────────────────
-    private val MINT_LIGHT = Palette(
+    private val MINT_LIGHT = lightPalette(
         primary = 0xFF2FB39B.toInt(),
         accent = 0xFF7FD1C1.toInt(),
-        groupBg = 0xFFF5FBFA.toInt(),
-        iconBg = 0xFFE3F5F1.toInt(),
-        title = 0xFF1A3330.toInt(),
-        sub = 0xFF7E9C97.toInt(),
-        divider = 0xFFE6F1EF.toInt(),
-        selected = 0xFFDEF2EE.toInt(),
-        cardBg = 0xFFFFFFFF.toInt(),
-        disabled = 0xFFB9C9C5.toInt()
+        iconBackground = 0xFFE3F5F1.toInt(),
+        selectedBackground = 0xFFF0FAF8.toInt()
     )
-    private val MINT_DARK = Palette(
+    private val MINT_DARK = darkPalette(
         primary = 0xFF4FCBB0.toInt(),
         accent = 0xFF2FB39B.toInt(),
-        groupBg = 0xFF171F1E.toInt(),
-        iconBg = 0xFF1E3230.toInt(),
-        title = 0xFFD5E5E2.toInt(),
-        sub = 0xFF7E9C97.toInt(),
-        divider = 0xFF23302E.toInt(),
-        selected = 0xFF1E3230.toInt(),
-        cardBg = 0xFF1D2423.toInt(),
-        disabled = 0xFF4E605D.toInt()
+        iconBackground = 0xFF1E3230.toInt(),
+        selectedBackground = 0xFF1A2827.toInt()
     )
 
     // ── 5. 天空蓝 ──────────────────────────────────────────────────────
-    private val SKY_LIGHT = Palette(
+    private val SKY_LIGHT = lightPalette(
         primary = 0xFF3D8BD4.toInt(),
         accent = 0xFF7FB6E8.toInt(),
-        groupBg = 0xFFF5F9FE.toInt(),
-        iconBg = 0xFFE6F0FB.toInt(),
-        title = 0xFF1B2A3A.toInt(),
-        sub = 0xFF7E93AC.toInt(),
-        divider = 0xFFE5EDF7.toInt(),
-        selected = 0xFFE1EDFA.toInt(),
-        cardBg = 0xFFFFFFFF.toInt(),
-        disabled = 0xFFB7C6D8.toInt()
+        iconBackground = 0xFFE6F0FB.toInt(),
+        selectedBackground = 0xFFF2F7FD.toInt()
     )
-    private val SKY_DARK = Palette(
+    private val SKY_DARK = darkPalette(
         primary = 0xFF5AA9E6.toInt(),
         accent = 0xFF3D8BD4.toInt(),
-        groupBg = 0xFF171C22.toInt(),
-        iconBg = 0xFF1E2A38.toInt(),
-        title = 0xFFD5E2F0.toInt(),
-        sub = 0xFF7E93AC.toInt(),
-        divider = 0xFF253141.toInt(),
-        selected = 0xFF1E2A38.toInt(),
-        cardBg = 0xFF1D232A.toInt(),
-        disabled = 0xFF4E5C6B.toInt()
+        iconBackground = 0xFF1E2A38.toInt(),
+        selectedBackground = 0xFF1A222C.toInt()
     )
 
     // ── 6. 薰衣草紫 ────────────────────────────────────────────────────
-    private val LAVENDER_LIGHT = Palette(
+    private val LAVENDER_LIGHT = lightPalette(
         primary = 0xFF8B7BD8.toInt(),
         accent = 0xFFB0A4E8.toInt(),
-        groupBg = 0xFFF8F6FD.toInt(),
-        iconBg = 0xFFEEE9FB.toInt(),
-        title = 0xFF2A2440.toInt(),
-        sub = 0xFF8E86A6.toInt(),
-        divider = 0xFFEBE6F7.toInt(),
-        selected = 0xFFE8E1FA.toInt(),
-        cardBg = 0xFFFFFFFF.toInt(),
-        disabled = 0xFFC1BAD4.toInt()
+        iconBackground = 0xFFEEE9FB.toInt(),
+        selectedBackground = 0xFFF6F3FD.toInt()
     )
-    private val LAVENDER_DARK = Palette(
+    private val LAVENDER_DARK = darkPalette(
         primary = 0xFFA695EE.toInt(),
         accent = 0xFF8B7BD8.toInt(),
-        groupBg = 0xFF1B1922.toInt(),
-        iconBg = 0xFF272238.toInt(),
-        title = 0xFFDFD9F0.toInt(),
-        sub = 0xFF8E86A6.toInt(),
-        divider = 0xFF2A2438.toInt(),
-        selected = 0xFF272238.toInt(),
-        cardBg = 0xFF211E29.toInt(),
-        disabled = 0xFF5C5570.toInt()
+        iconBackground = 0xFF272238.toInt(),
+        selectedBackground = 0xFF221E2E.toInt()
     )
 
     // ── 7. 奶油暖橙 ────────────────────────────────────────────────────
-    private val CREAM_LIGHT = Palette(
+    private val CREAM_LIGHT = lightPalette(
         primary = 0xFFE8934A.toInt(),
         accent = 0xFFF3BE8E.toInt(),
-        groupBg = 0xFFFEF8F2.toInt(),
-        iconBg = 0xFFFBEEDF.toInt(),
-        title = 0xFF3A2C1E.toInt(),
-        sub = 0xFFA08D77.toInt(),
-        divider = 0xFFF4E9DC.toInt(),
-        selected = 0xFFFAEEDF.toInt(),
-        cardBg = 0xFFFFFFFF.toInt(),
-        disabled = 0xFFD6C6B4.toInt()
+        iconBackground = 0xFFFBEEDF.toInt(),
+        selectedBackground = 0xFFFDF6EE.toInt()
     )
-    private val CREAM_DARK = Palette(
+    private val CREAM_DARK = darkPalette(
         primary = 0xFFF0A868.toInt(),
         accent = 0xFFE8934A.toInt(),
-        groupBg = 0xFF201A14.toInt(),
-        iconBg = 0xFF33261B.toInt(),
-        title = 0xFFF0E2D2.toInt(),
-        sub = 0xFFA08D77.toInt(),
-        divider = 0xFF332A21.toInt(),
-        selected = 0xFF33261B.toInt(),
-        cardBg = 0xFF262019.toInt(),
-        disabled = 0xFF6B5B4A.toInt()
+        iconBackground = 0xFF33261B.toInt(),
+        selectedBackground = 0xFF2A2118.toInt()
     )
 
-    // ── 8. 午夜暗色（本身就是深色主题，浅色档也保持深色）──────────────
-    private val MIDNIGHT_LIGHT = Palette(
-        primary = 0xFF7C8CF0.toInt(),
-        accent = 0xFF5A6AD8.toInt(),
-        groupBg = 0xFF14161C.toInt(),
-        iconBg = 0xFF22252F.toInt(),
-        title = 0xFFE6E9F2.toInt(),
-        sub = 0xFF8A90A0.toInt(),
-        divider = 0xFF232733.toInt(),
-        selected = 0xFF22252F.toInt(),
-        cardBg = 0xFF1A1D25.toInt(),
-        disabled = 0xFF4A4F5C.toInt()
+    // ── 8. 午夜暗色 ────────────────────────────────────────────────────
+    // ⚠️「午夜」指的是**强调色偏暗调**，不是把行涂黑：浅色模式下行底仍然是白底，
+    //    否则会在微信白色会话列表里插一整块深色面板（正是这一轮要避免的东西）。
+    private val MIDNIGHT_LIGHT = lightPalette(
+        primary = 0xFF6C7CE0.toInt(),
+        accent = 0xFF6C7CE0.toInt(),
+        iconBackground = 0xFFEAECFB.toInt(),
+        selectedBackground = 0xFFF3F4FE.toInt()
     )
-    private val MIDNIGHT_DARK = Palette(
+    private val MIDNIGHT_DARK = darkPalette(
         primary = 0xFF8E9BFF.toInt(),
         accent = 0xFF6C7CE0.toInt(),
-        groupBg = 0xFF101218.toInt(),
-        iconBg = 0xFF1D202A.toInt(),
-        title = 0xFFE6E9F2.toInt(),
-        sub = 0xFF8A90A0.toInt(),
-        divider = 0xFF1E212A.toInt(),
-        selected = 0xFF1D202A.toInt(),
-        cardBg = 0xFF161922.toInt(),
-        disabled = 0xFF464B58.toInt()
+        iconBackground = 0xFF22252F.toInt(),
+        selectedBackground = 0xFF1E212A.toInt()
     )
+
 
     /** 全部内置主题（顺序 = 设置页里的展示顺序） */
     val THEMES: List<Theme> = listOf(

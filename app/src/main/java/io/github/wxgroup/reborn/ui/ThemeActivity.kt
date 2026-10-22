@@ -204,7 +204,7 @@ class ThemeActivity : AppCompatActivity() {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(dp(16f), dp(16f))
                 lp.rightMargin = dp(6f)
-                listOf(palette.primary, palette.accent, palette.groupBg, palette.iconBg).forEach { c ->
+                listOf(palette.accent, palette.iconBackground, palette.selectedBackground, palette.textSecondary).forEach { c ->
                     addView(View(this@ThemeActivity).apply {
                         background = circle(c)
                     }, lp)
@@ -246,15 +246,18 @@ class ThemeActivity : AppCompatActivity() {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = dp(12f).toFloat()
-                setColor(GroupTheme.blend(palette.groupBg, accent, 0.07f))
+                // 预览和微信里一样：白底（深色主题下是深色底）+ 一道极浅描边，
+                // 颜色只出现在色条和图标容器上
+                setColor(palette.normalBackground)
+                setStroke(dp(1f), palette.divider)
             }
         }
         val bar = View(this).apply { background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(2f).toFloat()
+            cornerRadius = dp(1.5f).toFloat()
             setColor(accent)
         } }
-        row.addView(bar, LinearLayout.LayoutParams(dp(3f), dp(34f)).apply { rightMargin = dp(5f) })
+        row.addView(bar, LinearLayout.LayoutParams(dp(3f), dp(26f)).apply { rightMargin = dp(5f) })
 
         val icon = TextView(this).apply {
             text = "📁"
@@ -264,7 +267,7 @@ class ThemeActivity : AppCompatActivity() {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = dp(10f).toFloat()
-                setColor(GroupTheme.blend(palette.iconBg, accent, 0.22f))
+                setColor(GroupTheme.blend(palette.iconBackground, accent, 0.22f))
             }
         }
         row.addView(icon, LinearLayout.LayoutParams(dp(40f), dp(40f)).apply { rightMargin = dp(10f) })
@@ -274,13 +277,13 @@ class ThemeActivity : AppCompatActivity() {
             text = getString(R.string.theme_preview_name)
             textSize = 15f
             maxLines = 1
-            setTextColor(palette.title)
+            setTextColor(palette.textPrimary)
         }
         val sub = TextView(this).apply {
             text = getString(R.string.theme_preview_sub)
             textSize = 12f
             maxLines = 1
-            setTextColor(palette.sub)
+            setTextColor(palette.textSecondary)
         }
         col.addView(name)
         col.addView(sub)
@@ -307,11 +310,11 @@ class ThemeActivity : AppCompatActivity() {
 
     /** 直接把预览刷成目标配色（构建时用） */
     private fun applyPreview(pv: PreviewRow, p: GroupTheme.Palette, accent: Int) {
-        (pv.row.background as? GradientDrawable)?.setColor(GroupTheme.blend(p.groupBg, accent, 0.07f))
+        (pv.row.background as? GradientDrawable)?.setColor(p.normalBackground)
         (pv.bar.background as? GradientDrawable)?.setColor(accent)
-        (pv.icon.background as? GradientDrawable)?.setColor(GroupTheme.blend(p.iconBg, accent, 0.22f))
-        pv.name.setTextColor(p.title)
-        pv.sub.setTextColor(p.sub)
+        (pv.icon.background as? GradientDrawable)?.setColor(GroupTheme.blend(p.iconBackground, accent, 0.22f))
+        pv.name.setTextColor(p.textPrimary)
+        pv.sub.setTextColor(p.textSecondary)
     }
 
     /** 颜色过渡：240ms，从旧配色混到新配色（系统「减少动效」时直接跳终值） */
@@ -320,17 +323,17 @@ class ThemeActivity : AppCompatActivity() {
         from: GroupTheme.Palette, fromAccent: Int,
         to: GroupTheme.Palette, toAccent: Int
     ) {
-        Motion.animateColor(this, from.groupBg, to.groupBg, { c ->
-            (pv.row.background as? GradientDrawable)?.setColor(GroupTheme.blend(c, toAccent, 0.07f))
-        }, Motion.THEME_MS)
+        Motion.animateColor(this, from.normalBackground, to.normalBackground,
+            { c -> (pv.row.background as? GradientDrawable)?.setColor(c) }, Motion.THEME_MS)
         Motion.animateColor(this, fromAccent, toAccent, { c ->
             (pv.bar.background as? GradientDrawable)?.setColor(c)
         }, Motion.THEME_MS)
-        Motion.animateColor(this, from.iconBg, to.iconBg, { c ->
+        Motion.animateColor(this, from.iconBackground, to.iconBackground, { c ->
             (pv.icon.background as? GradientDrawable)?.setColor(GroupTheme.blend(c, toAccent, 0.22f))
         }, Motion.THEME_MS)
-        Motion.animateColor(this, from.title, to.title, { c -> pv.name.setTextColor(c) }, Motion.THEME_MS)
-        Motion.animateColor(this, from.sub, to.sub, { c -> pv.sub.setTextColor(c) }, Motion.THEME_MS)
+        Motion.animateColor(this, from.textPrimary, to.textPrimary, { c -> pv.name.setTextColor(c) }, Motion.THEME_MS)
+        Motion.animateColor(this, from.textSecondary, to.textSecondary,
+            { c -> pv.sub.setTextColor(c) }, Motion.THEME_MS)
     }
 
     private fun selectTheme(id: String) {
