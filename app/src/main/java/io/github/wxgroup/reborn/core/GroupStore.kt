@@ -361,6 +361,23 @@ object GroupStore {
     /** 读取默认签名 JSON 文本（来自模块 APK 的 raw 资源），供 UI 展示 */
     fun defaultSignatureJson(): String? = embeddedSignatureJson()
 
+    /** 已安装微信的版本号；未安装返回 null（供 UI 显示「微信 v8.0.79 · 内置签名已匹配」） */
+    fun installedWechatVersion(ctx: Context): String? = try {
+        @Suppress("DEPRECATION")
+        ctx.packageManager.getPackageInfo(WeChatKiller.WECHAT_PACKAGE, 0).versionName
+    } catch (_: Throwable) {
+        null
+    }
+
+    /** 内置签名声明的微信版本号（wechatVersion 字段，如 "8.0.79"） */
+    fun bundledSignatureVersion(): String = embeddedSignatureJson()?.let {
+        try {
+            JSONObject(it).optString("wechatVersion", "")
+        } catch (_: Throwable) {
+            ""
+        }
+    }.orEmpty()
+
     // ===== Hook 侧（运行在微信进程） =====
 
     /**
@@ -669,14 +686,26 @@ object GroupStore {
 
     // ===== 内置资源（任何进程均可直接读，无需 IPC） =====
 
-    fun embeddedSignatureJson(): String? = try {
-        GroupStore::class.java.classLoader
-            ?.getResourceAsStream("res/raw/wechat_signatures.json")
-            ?.bufferedReader()
-            ?.use { it.readText() }
-    } catch (t: Throwable) {
-        Log.e(TAG, "读内置签名资源失败: ${t.message}")
-        null
+    /**
+     * 内置签名 JSON。
+     *
+     * ⚠️ 必须放在 **assets** 而不是 res/raw：AGP 对 release 包默认做资源路径优化
+     * （aapt2 optimize 会把 res/raw/xxx 重命名成 res/ 短路径），按原路径
+     * getResourceAsStream 会读空 —— 实测 release 包里 res/raw 文件直接消失。
+     * assets 不参与资源编译，路径永远不变，hook 侧（微信进程的模块 classloader）
+     * 和 App 侧都能稳定读到。
+     */
+    fun embeddedSignatureJson(): String? {
+        val cl = GroupStore::class.java.classLoader ?: return null
+        // 主路径 assets；兼容曾放 res/raw 的旧构建
+        for (path in arrayOf("assets/wechat_signatures.json", "res/raw/wechat_signatures.json")) {
+            try {
+                cl.getResourceAsStream(path)?.bufferedReader()?.use { return it.readText() }
+            } catch (_: Throwable) {
+            }
+        }
+        Log.e(TAG, "读内置签名资源失败（assets 与 res/raw 均不可达）")
+        return null
     }
 
     // ===== 解析辅助 =====

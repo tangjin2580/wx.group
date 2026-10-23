@@ -293,22 +293,7 @@ class SettingsActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun forceStopWeChat(): Boolean {
-        val killedBySu = try {
-            val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "am force-stop $WECHAT_PACKAGE"))
-            p.outputStream.close()
-            p.waitFor()
-            p.exitValue() == 0
-        } catch (t: Throwable) {
-            false
-        }
-        // 兜底：即便没有 root，也尝试按后台进程方式杀掉（对前台微信无效，但无害）
-        val am = getSystemService(ACTIVITY_SERVICE) as? ActivityManager
-        try {
-            @Suppress("DEPRECATION")
-            am?.killBackgroundProcesses(WECHAT_PACKAGE)
-        } catch (_: Throwable) {
-        }
-        return killedBySu
-    }
+    /** 实现已提取到 [io.github.wxgroup.reborn.core.WeChatKiller]，与新版 Compose 设置页共用 */
+    private fun forceStopWeChat(): Boolean =
+        io.github.wxgroup.reborn.core.WeChatKiller.forceStop(this)
 }

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Card
@@ -49,8 +50,8 @@ import io.github.wxgroup.reborn.ui.theme.Mint40
  *  - 「使用说明」默认折叠：说明类文字不占版面，首次启动自动展开一次
  * ════════════════════════════════════════════════════════════════════════════ */
 
-/** 快捷入口的动作 */
-enum class QuickAction { NEW_GROUP, THEME, UPDATE }
+/** 快捷入口的动作（由 AppRoot 接线跳转 / 触发） */
+enum class QuickAction { NEW_GROUP, THEME, SIGNATURE, UPDATE }
 
 /**
  * 首页。
@@ -69,9 +70,16 @@ fun HomeScreen(
     onQuick: (QuickAction) -> Unit,
     onOpenSignature: () -> Unit
 ) {
+    // 三块内容的左右边距统一 16dp：在这里统一注入，
+    // 保证状态卡 / 快捷操作 / 使用说明的卡片宽度完全一致
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = contentPadding,
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = contentPadding.calculateTopPadding(),
+            bottom = contentPadding.calculateBottomPadding()
+        ),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         // ── 状态总览卡 ──
@@ -88,6 +96,13 @@ fun HomeScreen(
                     title = "新建分组",
                     subtitle = "创建一个收纳组并添加成员",
                     onClick = { onQuick(QuickAction.NEW_GROUP) }
+                )
+                SettingsItem(
+                    icon = Icons.Rounded.Code,
+                    iconTint = io.github.wxgroup.reborn.ui.theme.IconPurple,
+                    title = "微信签名配置",
+                    subtitle = "按你的微信版本补全 Hook 方法签名",
+                    onClick = { onQuick(QuickAction.SIGNATURE) }
                 )
                 SettingsItem(
                     icon = Icons.Rounded.Palette,
@@ -121,8 +136,8 @@ fun HomeScreen(
 /**
  * 顶部状态卡：模块激活 / 微信版本 / 签名配置。
  *
- * 签名状态为「未配置」或「错误」时整卡可点 —— 因为这是唯一会让功能完全失效的
- * 原因，必须给用户一个「一键去修」的入口，而不是只在角落放个灰字提示。
+ * 整卡恒可点 —— 签名「未配置/错误」时是「一键去修」，正常时就是签名配置入口。
+ * 这是唯一会让功能完全失效的原因，必须给用户一个直达入口，而不是只在角落放个灰字提示。
  */
 @Composable
 fun StatusCard(
@@ -142,17 +157,11 @@ fun StatusCard(
         SignatureStatus.ERROR -> "错误"
     }
 
-    // 需要用户处理时整卡可点；否则只展示信息
-    val cardModifier = if (needsAction) {
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .clickable(onClick = onOpenSignature)
-    } else {
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-    }
+    // 恒可点：签名有问题时是「一键去修」，正常时就是签名配置入口
+    // （左右边距由 HomeScreen 的 LazyColumn contentPadding 统一给 16dp）
+    val cardModifier = Modifier
+        .fillMaxWidth()
+        .clickable(onClick = onOpenSignature)
 
     Card(
         modifier = cardModifier,

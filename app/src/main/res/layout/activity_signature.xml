@@ -11,9 +11,19 @@
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:paddingTop="14dp"
-        android:paddingBottom="10dp"
+        android:paddingBottom="6dp"
         android:text="@string/signature_hint"
         android:textSize="13sp" />
+
+    <!-- 版本匹配状态行：让「内置签名是否适用于当前微信」一目了然 -->
+    <TextView
+        android:id="@+id/tv_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="10dp"
+        android:textSize="12sp" />
 
     <ScrollView
         android:layout_width="match_parent"
@@ -37,6 +47,33 @@
             android:textColor="@color/wg_text_primary"
             android:textSize="12sp" />
     </ScrollView>
+
+    <!-- 次级行：一键填充内置 / 在线拉取最新（都不直接保存，落到编辑器里让用户确认） -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingStart="@dimen/wg_content_side"
+        android:paddingEnd="@dimen/wg_content_side"
+        android:paddingTop="4dp">
+
+        <Button
+            android:id="@+id/btn_bundled"
+            style="@style/WgButton.Outlined"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:text="@string/signature_fill_bundled" />
+
+        <Button
+            android:id="@+id/btn_fetch"
+            style="@style/WgButton.Outlined"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/signature_fetch_online" />
+    </LinearLayout>
 
     <LinearLayout
         android:layout_width="match_parent"

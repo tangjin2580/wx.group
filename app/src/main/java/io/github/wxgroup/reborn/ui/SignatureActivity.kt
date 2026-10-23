@@ -1,17 +1,39 @@
 package io.github.wxgroup.reborn.ui
 
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.widget.Button
 import android.widget.EditText
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import io.github.wxgroup.reborn.R
 import io.github.wxgroup.reborn.core.GroupStore
 import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 
+/**
+ * 微信签名配置页。
+ *
+ * 签名获取的三条路（从省事到折腾）：
+ *   1. **内置**：APK 的 res/raw/wechat_signatures.json（随版本发布，hook 端默认就用它，
+ *      正常情况下这个页面什么都不用改）。状态行会显示「微信版本 vs 内置签名版本」是否匹配。
+ *   2. **在线**：从 GitHub 仓库拉最新的 wechat_signatures.json —— 适配新微信时
+ *      只需要更新仓库文件，不用发新版 App。
+ *   3. **手动**：自己用 jadx 逆向对应版本微信，把类/方法签名填进编辑器。
+ *
+ * 「填充内置」「在线获取」都只落到编辑器，不直接保存 —— 用户确认无误再点保存。
+ */
 class SignatureActivity : AppCompatActivity() {
 
     private lateinit var etJson: EditText
+    private lateinit var tvStatus: TextView
+
+    /** 仓库里的签名文件 raw 地址（main 分支，随仓库更新，无需发版） */
+    private val onlineUrl =
+        "https://raw.githubusercontent.com/tangjin2580/wx.group/main/app/src/main/res/raw/wechat_signatures.json"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -19,12 +41,88 @@ class SignatureActivity : AppCompatActivity() {
         title = getString(R.string.signature_title)
 
         etJson = findViewById(R.id.et_json)
-        // 优先显示已保存的，否则显示默认
+        tvStatus = findViewById(R.id.tv_status)
+
+        // 优先显示已保存的，否则显示内置默认
         val saved = GroupStore.getSignatures(this)
         etJson.setText(saved?.toJson()?.toString(2) ?: GroupStore.defaultSignatureJson())
 
+        refreshStatus()
+
         findViewById<Button>(R.id.btn_save).setOnClickListener { save() }
         findViewById<Button>(R.id.btn_reset).setOnClickListener { reset() }
+        findViewById<Button>(R.id.btn_bundled).setOnClickListener { fillBundled() }
+        findViewById<Button>(R.id.btn_fetch).setOnClickListener { fetchOnline() }
+    }
+
+    /** 刷新顶部状态行：已装微信版本 vs 内置签名版本 */
+    private fun refreshStatus() {
+        val wechat = GroupStore.installedWechatVersion(this)
+        val bundled = GroupStore.bundledSignatureVersion()
+        tvStatus.text = if (wechat == null) {
+            getString(R.string.signature_status_mismatch, "未安装", bundled.ifEmpty { "无" })
+        } else if (wechat == bundled) {
+            getString(R.string.signature_status_match, wechat, bundled)
+        } else {
+            getString(R.string.signature_status_mismatch, wechat, bundled.ifEmpty { "无" })
+        }
+    }
+
+    /** 一键填入 APK 内置签名（不自动保存，让用户确认后再点保存） */
+    private fun fillBundled() {
+        val json = GroupStore.defaultSignatureJson()
+        if (json == null) {
+            Toast.makeText(this, R.string.signature_fetch_fail, Toast.LENGTH_SHORT).show()
+            return
+        }
+        etJson.setText(json)
+        Toast.makeText(this, R.string.signature_fill_done, Toast.LENGTH_LONG).show()
+    }
+
+    /** 从 GitHub 仓库拉最新签名（适配新微信无需发版）。网络请求放后台线程。 */
+    private fun fetchOnline() {
+        Toast.makeText(this, R.string.update_checking, Toast.LENGTH_SHORT).show()
+        Thread {
+            var text: String? = null
+            var err: String? = null
+            try {
+                val conn = (URL(onlineUrl).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    setRequestProperty("User-Agent", "wxgroup-reborn-signatures")
+                }
+                try {
+                    if (conn.responseCode == HttpURLConnection.HTTP_OK) {
+                        text = conn.inputStream.bufferedReader().use { it.readText() }
+                    } else {
+                        err = "HTTP ${conn.responseCode}"
+                    }
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (t: Throwable) {
+                err = t.message ?: t.javaClass.simpleName
+            }
+            Handler(Looper.getMainLooper()).post {
+                val json = text
+                when {
+                    // 校验：必须是合法 JSON 且带 methods 字段，避免把错误页存进配置
+                    json != null && isValidJson(json) && JSONObject(json).has("methods") -> {
+                        etJson.setText(json)
+                        val v = JSONObject(json).optString("wechatVersion", "?")
+                        Toast.makeText(
+                            this, getString(R.string.signature_fetch_ok, v), Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    else -> Toast.makeText(
+                        this,
+                        getString(R.string.signature_fetch_fail, err ?: "响应异常"),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }.start()
     }
 
     private fun save() {
