@@ -23,7 +23,7 @@ import org.json.JSONObject
 class GroupProvider : ContentProvider() {
 
     private val TAG = "WxGroupReborn"
-    private val AUTHORITY = "io.github.wxgroup.reborn.groups"
+    private val AUTHORITY = "io.github.wxgroup.groups"
     private val PATH_GROUPS = "groups"
     private val PATH_SIGNATURE = "signature"
     private val COL_DATA = "data"

@@ -22,7 +22,8 @@ import org.json.JSONObject
  */
 object GroupStore {
 
-    const val MODULE_PKG = "io.github.wxgroup.reborn"
+    /** 应用身份（applicationId）。⚠️ 与代码包名（namespace）不同，v1.2.0 起去掉 reborn */
+    const val MODULE_PKG = "io.github.wxgroup"
     private const val TAG = "WxGroupReborn"
     const val PREFS = "wxgroup"
     const val KEY_GROUPS = "groups"
@@ -66,7 +67,7 @@ object GroupStore {
     )
 
     /** Provider 通道（模块 App → 微信进程的回退通道，也是「分组已变更」通知的 URI） */
-    const val PROVIDER_URI = "content://io.github.wxgroup.reborn.groups"
+    const val PROVIDER_URI = "content://io.github.wxgroup.groups"
 
     // ===== 模块 App 侧（运行在模块进程） =====
 

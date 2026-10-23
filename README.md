@@ -1,4 +1,4 @@
-# 微信分组 (wxgroup-reborn)
+# 微信分组 (wxgroup)
 
 > 微信会话分组 LSPosed 模块 —— 在会话列表里做「收纳组」（无联网、无账号、完全离线）
 
@@ -170,6 +170,12 @@ Xposed Hook 跑在**微信进程**里，分组数据由**模块 App 进程**创�
 ---
 
 ## 更新日志
+
+### v1.2.0（2026-10-23）
+
+- **applicationId 更名**：`io.github.wxgroup.reborn` → **`io.github.wxgroup`**（与显示名一起彻底去掉 reborn）。
+  - Provider authority 同步改为 `io.github.wxgroup.groups`；代码包名（namespace）保留不动，内部实现零改动。
+  - **升级路径**：直接安装新包（与旧包共存）→ 首次启动自动从 `/data/local/tmp` 镜像恢复分组与设置（签名走内置）→ 在 LSPosed 重新启用新包并勾选微信作用域 → 强停微信 → 卸载旧包 `io.github.wxgroup.reborn`。
 
 ### v1.1.0（2026-10-23）
 
