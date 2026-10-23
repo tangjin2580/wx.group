@@ -46,10 +46,15 @@ class SignatureActivity : AppCompatActivity() {
      * （AGP release 资源路径优化会重命名 res/raw 路径），指向 res/raw 会 404。
      */
     private val onlineSources = listOf(
+        // ⚠️ 这个 WebDAV 账号的凭据是硬编码的，等于公开（APK 可反编译）。
+        //    因此服务端必须把这个账号关在签名目录里（webdav_root_path=/wxgroup），
+        //    且密码不能与面板管理 key 相同 —— 否则泄露的就是整个网盘/后台。
+        //    CI 上传用的是同一组凭据（GitHub Secrets R2PAN_WEBDAV_USER/PASS），
+        //    换密码时这三处必须同时改：本文件、Secrets、服务端。
         OnlineSource(
             "https://r2pan.us.ci/webdav/wxgroup/wechat_signatures.json",
             user = "webdav",
-            pass = "lixin2324"
+            pass = "a.123456"
         ),
         OnlineSource("https://cdn.jsdelivr.net/gh/tangjin2580/wx.group@main/app/src/main/assets/wechat_signatures.json"),
         OnlineSource("https://api.github.com/repos/tangjin2580/wx.group/contents/app/src/main/assets/wechat_signatures.json"),

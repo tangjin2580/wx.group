@@ -190,10 +190,17 @@ Xposed Hook 跑在**微信进程**里，分组数据由**模块 App 进程**创�
 
 ## 更新日志
 
+### v1.3.0（2026-10-23）
+
+- **签名镜像凭据轮换**：r2pan WebDAV 密码与面板管理 key 解耦（此前两者是同一个串，而密码是硬编码在 APK 里的 —— 等于把后台钥匙公开了）。三处同步：本仓库 `SignatureActivity.kt`、GitHub Secrets `R2PAN_WEBDAV_PASS`、服务端。
+- 代码里补了一段注释，写明「凭据必然公开，所以服务端必须把账号限制在签名目录内」这个约束。
+- 无功能变更；已装 v1.2.x 的用户不升级也能继续用「在线获取」（旧凭据在服务端已失效 → 会回落到 jsDelivr / GitHub raw）。
+
 ### v1.2.1（2026-10-23）
 
 - **修「在线获取签名 404」**：签名库 v1.0.1 迁 assets 后在线源仍指向旧 res/raw 路径。
 - 在线源升级为四级回退，并新增**私有 WebDAV 网盘镜像**（r2pan，Cloudflare 加速国内直连）为第一优先源；jsDelivr / GitHub API / raw 依次兜底，失败时汇总各源原因。
+- 新增 CI job `publish-signature`：推送即自动把 `assets/wechat_signatures.json` 同步到 r2pan 并回读校验 sha256。
 
 ### v1.2.0（2026-10-23）
 
