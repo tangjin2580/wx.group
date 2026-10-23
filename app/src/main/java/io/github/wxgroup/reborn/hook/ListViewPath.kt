@@ -540,12 +540,33 @@ internal fun ConversationGroupHook.wxSettings(): io.github.wxgroup.reborn.core.W
 // 虚拟模型
 // ==================================================================================
 
+/**
+ * 会话列表的「顺序指纹」。
+ *
+ * 为什么需要：虚拟模型缓存键原先只认行数，而**置顶/取消置顶、来新消息把会话顶上来**
+ * 都只改变顺序、不改变行数 —— 模型里存的是真实下标，顺序一变这些下标就指向了别的
+ * 会话，表现就是「分组成员被打散出来」回到主列表。
+ *
+ * 为什么用 identityHashCode 而不是取 talker：取 talker 要逐行反射（k4Of + talkerOf），
+ * 而 getCount 每帧都会跑，256 行反射撑不住。行对象的身份哈希是一次 List.get + 一次
+ * 哈希，无反射、无分配，代价可以忽略。
+ *
+ * ⚠️ 代价是行对象被重建（即使顺序没变）时指纹也会变，模型会多重建一次 ——
+ * 这是「宁可多算一次也要保证不错位」的取舍。
+ */
+private fun orderStampOf(rows: List<*>): Int {
+    var h = 1
+    for (i in rows.indices) h = h * 31 + System.identityHashCode(rows[i])
+    return h
+}
+
 internal fun ConversationGroupHook.onLegacyGetCount(param: MethodHookParam) {
     val a = param.thisObject ?: return
     // 用 q.d.size 作为权威行数：getView 就是按这个列表索引的，
     // q.a（原始 getCount 的返回值）在刷新过程中可能短暂过期甚至为 -1。
     // 拿不到行列表就直接放行给微信原逻辑（宁可这帧不折叠，也不乱给行数）。
-    val realCount = legacyRows(a)?.size ?: return
+    val rows = legacyRows(a) ?: return
+    val realCount = rows.size
     if (legacyCountLogged < 5) {
         legacyCountLogged++
         val orig = invokeOriginal(param) as? Int
@@ -554,7 +575,7 @@ internal fun ConversationGroupHook.onLegacyGetCount(param: MethodHookParam) {
     checkAutoRefresh(a)
 
     val groups = sortedGroups()
-    val key = ModelKey(realCount, openGroupId, groupsRev)
+    val key = ModelKey(realCount, openGroupId, groupsRev, orderStampOf(rows))
     var model = legacyModel
     if (model == null || legacyModelKey != key) {
         model = buildLegacyModel(a, realCount, groups)

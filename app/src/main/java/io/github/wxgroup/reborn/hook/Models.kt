@@ -54,11 +54,17 @@ internal class LegacyModel(val entries: List<VEntry>, val hiddenCount: Int)
  * 早期用「真实行数 + 全部分组成员的拼接字符串」当 key，而 getCount 每帧都会被调用 ——
  * 滚动时等于每帧拼一个大字符串再比较，GC 压力明显。改成一个三元组：
  * 行数变了、打开了别的分组、或分组数据本身变过（rev）才重建。
+ *
+ * ⚠️ 但「行数不变」不等于「模型还能用」：模型里存的是**真实下标**，
+ * 只要会话顺序变了（置顶/取消置顶、来新消息把会话顶上来），同样的下标就指向了
+ * 另一个会话 —— 表现是分组成员被打散回主列表。所以再补一个 [orderStamp] 顺序指纹。
  */
 internal data class ModelKey(
     val realCount: Int,
     val openGroupId: String?,
-    val groupsRev: Int
+    val groupsRev: Int,
+    /** 会话顺序指纹（见 `orderStampOf`）；RV 分支暂不传，默认 0 */
+    val orderStamp: Int = 0
 )
 
 /** RecyclerView 分支的虚拟模型 */
