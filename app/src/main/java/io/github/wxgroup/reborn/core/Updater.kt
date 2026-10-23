@@ -102,10 +102,16 @@ object Updater {
     }
 
     private fun parseVersion(v: String): List<Int> {
-        val head = v.removePrefix("v").split(".", "-", "+")[0]
-        return head.split(Regex("[^0-9]+"))
-            .filter { it.isNotEmpty() }
-            .map { it.toIntOrNull() ?: 0 }
+        val s = v.trim().removePrefix("v").removePrefix("V")
+        // 先剥掉 "-beta" / "+build" 这类后缀，再按点号分段。
+        // ⚠️ 不能写成 s.split(".", "-", "+")[0]：vararg 版 split 会把「.」也当分隔符，
+        // 于是 "1.3.12" 被切成 ["1","3","12"]，取 [0] 只剩 "1" ——
+        // 所有 1.x 版本都退化成 [1]，比较永远得 0，检查更新就永远提示「已是最新」。
+        val core = s.substringBefore('-').substringBefore('+')
+        if (core.isEmpty()) return emptyList()
+        return core.split('.').map { seg ->
+            seg.filter { it.isDigit() }.toIntOrNull() ?: 0
+        }
     }
 
     /**
