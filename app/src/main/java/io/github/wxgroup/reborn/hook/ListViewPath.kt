@@ -220,7 +220,7 @@ internal fun ConversationGroupHook.k4Of(row: Any?): Any? {
     row ?: return null
     XposedHelpers.getObjectField(row, "d")?.let { return it }
     val cls = row.javaClass
-    val f: Field? = (if (rowK4FieldOwner === cls) {
+    val f: Field = (if (rowK4FieldOwner === cls) {
         rowK4Field
     } else {
         var hit: Field? = null
