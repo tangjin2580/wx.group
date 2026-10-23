@@ -1,98 +1,79 @@
-# wxgroup-reborn
+# 微信分组·重生 (wxgroup-reborn)
 
 > 微信会话分组 LSPosed 模块 —— 在会话列表里做「收纳组」（无联网、无账号、完全离线）
 
 在微信会话列表顶部插入**可点开的收纳组行**，点进去就是一个二级页面，只显示这个组的成员会话；返回键回到上一级，效果类似微信自带的「折叠的群聊」。
 
-模块本身：
+**当前版本 v1.0.1** → [下载 Release](https://github.com/tangjin2580/wx.group/releases/latest)
 
-- ✅ **完全离线**：无账号、无联网、无任何服务端校验，分组数据只存在本机。
-- ✅ **libxposed API 102**：基于 `io.github.libxposed:api:102.0.0`（LSPosed 新版 API），不再依赖 legacy `de.robv.android.xposed:api:82`。旧代码风格通过 `xp/` 下的薄封装层保留。
-- ✅ **签名可编辑**：微信的方法签名抽成一份 JSON，运行时读取，App 内即可修改，**无需重新打包**。
-- ✅ **防御式 Hook**：每个 Hook 都包了 try/catch + 日志，单条签名填错只会导致该功能静默失效，不会崩微信。
+## 特性
 
-## 更新日志
-
-### 未发布
-
-- **修「删掉的分组又回来」**：微信侧原先按 id 对「微信私有目录 ↔ 镜像」取并集，一侧删掉的分组会被另一侧旧文件带回；模块 App 导入镜像时也是按 id 合并。现在两边都改为整份取最新（每个写入方本来就写完整表）。
-- **模块 App 写分组不再覆盖微信侧改动**：每次修改前先并入镜像；改名 / 置顶 / 免打扰只改对应字段；排序页只写回 order，不再整表替换；App 里「加入分组」也遵守单组语义。
-- **隐私**：Provider 只回应微信与模块自身；签名编辑页不再导出。
-- **同步通道自检**：镜像文件缺失时设置页给出提示，并可一键用 root 创建（含 settings 文件）。
-- `su` 强杀改到后台线程，避免等待授权时 ANR；Hook 只在微信主进程挂载。
-
-### v0.1.4（2026-10-18）—— 修「排序/设置改了不生效」
-
-**根因**：v0.1.2 引入的「tmp + rename 原子写」在 `/data/local/tmp` 上不可用 —— 该目录是
-`drwxrwx--x shell shell`，普通应用 uid（模块 App 和微信都是）**建不了 `.tmp` 文件**（EACCES）。
-而镜像文件本身是 666，覆盖写一直可行。于是：
-
-- 模块 App 里排序保存 → 本地 prefs 写成功（排序页显示正确）→ 镜像写失败 → 微信永远读不到新顺序
-- v0.1.3 的设置开关镜像 `wxgroup_reborn_settings.json` 根本建不出来 → 开关也到不了微信
-
-**修复**：
-- `atomicWriteText` 改为「tmp+rename 失败即退回直接覆盖写」，两种场景全覆盖
-- `reconcileXposed` 改写完整字段（order/icon/pinned/muted）—— 之前只写 id/name/members，微信侧每次对齐都会把用户排好的顺序剥掉（一旦私有文件比镜像新就复现「顺序自动复位」）
-- 已通过 root 补建 settings 种子文件（666）
-
-真机端到端验证：排序页拖动 → 保存 → 镜像 mtime 更新 → 微信日志 `分组已变更，已刷新会话列表` → 列表按新顺序渲染，零崩溃。
-
-### v0.1.3（2026-10-18）—— 易用性九连改
-
-围绕「围绕分组操作」补齐的 9 个易用性改进：
-
-1. **批量成员管理**：分组行长按 → 「添加成员…」列出当前会话列表全部会话（带未读标记、标注现属分组），勾选即成员集合，保存一次性完成批量加入/移出（单组语义自动处理）。
-2. **组内移出成员**：组内会话长按菜单显示「移出分组「XX」」（v0.1.2 已有，此处确认交互闭环）；模块 App 分组管理页也支持点击成员移出。
-3. **分组备份**：设置页新增「导出分组」（JSON 复制到剪贴板 + 预览）与「从文本导入」（整表替换），重装微信/换机可救回分组。
-4. **未读发送者副标题**：组行副标题可显示「A、B 等 N 条未读」（发送者取会话备注/昵称，`field_` 前缀字段跨版本稳），设置页可开关。
-5. **分组选择器搜索**：「添加到分组」弹窗顶部加搜索框，名称或成员 username 命中即过滤。
-6. **设置页显示偏好**：角标纯红点 / 隐藏空分组 / 紧凑行高 / 发送者副标题四个开关，写入 `/data/local/tmp` 镜像 + Provider 通知，微信侧 2s 内生效、无需重启。
-7. **长按菜单精简**：去掉「上移/下移」（与拖动排序页功能重叠），加入「添加成员…」，7 项变 6 项。
-8. **双击分组行跳未读**：在二级页面里快速二次点击组头，直接滚到组内第一个有未读的会话。
-9. **展开自动滚到组头**：点开分组后列表自动滚动到组头位置，不用再手动滑。
-
-### v0.1.2（2026-10-17）—— 性能与健壮性优化
-
-渲染热路径（滚动掉帧的主因）：
-
-- **反射全链路加缓存**：`XposedHelpers` 的 Field/Method 按「运行时类 + 名字」缓存（未命中也缓存，不再对已改名的旧候选反复扫类）。此前 `callMethod` 每次都遍历继承链 + `declaredMethods`，绑定一屏 ≈ 1100+ 次反射扫描，现在只剩真实调用。
-- **组未读改快照**：改为 400ms TTL 的「username→未读」快照 + 查表求和，不再每渲染一个组行就把整个会话列表扫一遍。
-- **模型缓存键轻量化**：`getCount` 每帧都会跑，原来每帧拼「全部分组成员」的大字符串做比较；改成（行数, 打开分组, 数据版本）三元组。
-- **`getCount` 不再多调一次原方法**：原返回值只用于日志，非日志期直接跳过。
-
-数据层：
-
-- **读路径零写入**：`getGroupsXposed` 变纯读；「微信私有目录 ↔ /data/local/tmp」对齐只在启动和保存时做。读分组改为「stamp 未变直接用缓存」，滚动时不再周期性触发主线程文件 IO + JSON 解析。
-- **原子写**：分组文件改「同目录 tmp + rename」，进程被杀不再留下半截 JSON（丢过分组）。`chmod` 从 `Runtime.exec(...).waitFor()`（每次保存 fork 一个进程）改成 `Os.chmod`。
-- **合并以新为准**：同 id 分组合并时以「更晚修改的那份文件」为准，模块 App 里的陈旧镜像不再覆盖微信侧刚改的数据。
-- **改分组先拷贝**：所有分组操作在副本上进行，持久化失败不会再污染内存缓存。
-
-其它：
-
-- **未读字段修正**：8.0.79 实测 `q2` 恒为 0（混淆重排后已不是未读数），改用不参与混淆的 `field_unReadCount`，不再取多字段 max。首次运行会打对照日志便于跨版本核对。
-- **轮询省电**：列表不可见（微信后台/盖着聊天页）时轮询自动退避停止，回到会话列表自动恢复；模块 App 保存分组会对 Provider 发 notifyChange（能解析时即时刷新，解析不了靠轮询兜底）。
-- **诊断开关**：消费方 Hook、菜单点击调用栈等排查用代码统一收进 `DIAG_LOG`（release 默认关）。
-- **RecyclerView 分支补齐**：分组行接上点击/长按（此前 RV 机型上组行点了没反应）；`getItemViewType` 的收纳组 type 改为运行时取微信原值，不再写死。
-
-### v0.1.1（2026-10-17）
-
-- 适配微信 **8.0.79（versionCode 3182）**：该版混淆名整体重排（旧 `jo5` 包被协程 lambda 占用），签名全部落空导致模块失效。逐项改名：适配器 `jo5/y0 → iq5/a1`、数据容器字段 `q → r`、talker 方法 `i1() → f1()`、长按菜单宿主 `conversation/s3 → conversation/x3`、菜单容器 `kj5/i4 → gl5/h4`、菜单项 `kj5/j4 → gl5/i4`。
-- 代码侧改为版本自适应：容器字段 `r`/`q`、talker 方法 `f1`/`i1` 双候选，后续小版本重排通常只需改 `wechat_signatures.json`。
-- 内置签名 `revision 6 → 7`，`wechatVersion` 更新为 8.0.79。
-- 构建配置统一为 `compileSdk 35` / `buildToolsVersion 35.0.0`，CI 同步安装对应 SDK。
+- ✅ **完全离线**：无账号、无联网（仅「检查更新」按需访问 GitHub）、无任何服务端校验，分组数据只存在本机。
+- ✅ **libxposed API 102**：基于 `io.github.libxposed:api:102.0.0`（LSPosed 新版 API），旧代码风格通过 `xp/` 薄封装层保留。
+- ✅ **Jetpack Compose + Material 3 设置界面**（v1.0.0 重做）：「海盐薄荷」主题，底部三 Tab（首页 / 分组 / 设置），深浅色跟随系统，与微信内渲染共用同一套取色。
+- ✅ **签名零配置起步**：内置微信 8.0.79 的实测 Hook 签名，安装即用；签名页提供「版本匹配状态行 / 一键填充内置 / 在线获取最新」，适配新微信无需重新打包。
+- ✅ **实时生效**：模块 App 里改分组 / 偏好 / 主题，经镜像通道 + Provider 通知，微信侧秒级自动刷新，无需重启微信。
+- ✅ **防御式 Hook**：每个 Hook 都包 try/catch + 日志，单条签名失效只会静默跳过该功能，不会崩微信。
 
 ---
 
-## 功能
+## 安装与激活
 
-- **像「折叠群聊」一样在会话列表里直接创建收纳组**：本模块接管微信会话列表的 `BaseAdapter`（8.0.79 为 `iq5/a1`，8.0.78 为 `jo5/y0`，由签名配置自动解析），在列表顶部插入**可折叠的收纳组行**。点一下收纳组行即可展开/收起，展开后该组内的联系人和群聊直接显示在其下方（由微信原生行渲染），其余位置则把这些会话**隐藏**——效果与微信自带的「折叠群聊」一致，而不是简单的背景着色。
-- **微信界面内建分组**：长按任意聊天（个人或群聊 `@chatroom` 均可）→「添加到分组」→ 选已有分组，或直接选「**＋ 新建分组…**」当场建一个，命名后该会话即被收进收纳组。菜单里还会显示「**移出分组「X」**」（仅当该会话已在某分组里），一键把会话放回主列表。
-- **分组归属互斥**：收纳组是「文件夹」语义，一个会话只待在一个分组里。把已在 A 组的会话加进 B 组会自动从 A 摘掉，并提示「已从 A 移到 B」。
-- **自定义分组排序**：长按收纳组行 →「上移 / 下移 / 拖动排序…」。拖动排序页照抄微信「通讯录 → 标签 → 标签排序」的 ☰ 拖拽把手交互。顺序规则见下。
-- **分组顺序规则**：置顶优先 → 手动 `order` → 创建时间（从分组 id 里编码的毫秒时间戳取）→ 名字。没手动排过时就是稳定的创建顺序；排过之后完全听用户的；新建分组排最后。
-- 管理命名分组：创建 / 重命名 / 清空成员 / 删除（都在微信界面的长按菜单里）；置顶(pin) / 免打扰(mute) 在模块 App 里。
-- 所有分组数据只存在本机，没有任何云端同步或激活服务器。
-- **分组落点**：微信私有目录 `/data/user/0/com.tencent.mm/files/chatgroup_groups.json`（裸 JSON 数组），同时兼容 `{"groups":[…]}` 与 名字→成员 映射两种手写格式。
+1. 从 [Releases](https://github.com/tangjin2580/wx.group/releases/latest) 下载 `app-release.apk` 安装。
+2. 打开 **LSPosed Manager → 模块**，勾选启用 **微信分组·重生**，作用域勾选 **微信 (com.tencent.mm)**。
+3. **（一次性，需 root）预创建跨进程镜像文件**——模块 App 进程在 SELinux 下无法在 `/data/local/tmp` 新建文件，只能覆盖已存在的世界可写文件：
+   ```bash
+   adb shell su -c 'for f in groups settings; do p=/data/local/tmp/wxgroup_reborn_$f.json; touch $p && chmod 666 $p; done'
+   ```
+   > 也可以在模块 App 里看到「模块状态：未激活」时，按提示用 root 创建（旧版设置页内置一键创建入口）。
+4. 强停微信后重新打开，会话列表顶部就会出现收纳组。
+
+### 模块 App（Compose 界面）
+
+| Tab | 内容 |
+| --- | --- |
+| **首页** | 状态总览（模块通道 / 微信版本 / 签名匹配）、快捷操作（新建分组 / 签名配置 / 外观主题 / 检查更新）、折叠的使用说明 |
+| **分组** | 分组完整管理：新建、右滑重命名、左滑删除、置顶 / 免打扰、长按拖动排序；「管理成员」复用旧版成员管理页 |
+| **设置** | iOS 风格分组列表：外观与主题、显示偏好 4 开关、微信签名配置 + 强杀微信、关于 |
+
+### 在微信里使用（全部操作都在微信界面内完成）
+
+- 会话列表顶部出现**分组收纳行**（折叠态，点击展开/收起）。
+- 收进分组：**长按聊天 → 「添加到分组」** → 选已有分组或当场新建。
+- 移出分组：**长按会话 → 「移出分组「X」」**。
+- 调整顺序 / 重命名 / 删除分组：**长按收纳组行** → 对应菜单项。
+- 分组顺序规则：置顶优先 → 手动 `order` → 创建时间 → 名字。
+- 分组归属互斥（文件夹语义）：把已在 A 组的会话加进 B 组会自动从 A 摘掉。
+
+---
+
+## 签名配置（按微信版本）
+
+微信各版本会重排内部类名/方法，Hook 签名抽成一份 JSON 运行时读取。**内置 `app/src/main/assets/wechat_signatures.json` 已含微信 8.0.79（versionCode 3182）的全部实测签名**，多数用户无需任何操作——签名页状态行会显示：
+
+```
+已装微信 v8.0.79 · 内置签名 v8.0.79 · 已匹配，无需改动
+```
+
+版本不匹配时有三条路：
+
+1. **在线获取最新**（推荐）：从本仓库 `main` 分支拉最新的 `wechat_signatures.json`——适配新微信只需更新仓库文件，不用发新版 App。
+2. **填充内置**：一键填入当前 APK 内置的签名。
+3. **手动逆向**：用 jadx 之类工具按「方法名 + params + ret」三要素填写。`methodName` 为空或含 `TODO` 的条目会被自动跳过，不会崩微信。
+
+> ⚠️ 内置签名库必须放在 **assets** 而不是 res/raw：AGP 对 release 包默认做资源路径优化（aapt2 optimize 重命名资源路径），按 `res/raw/...` 原路径读会拿到空（debug 包无此优化，容易漏测）。assets 路径恒定，微信进程里的模块 ClassLoader 与 App 进程都能稳定读到。
+
+### 微信 8.0.79 关键混淆名对照（实测）
+
+| 角色 | 8.0.78 | 8.0.79 |
+| --- | --- | --- |
+| 会话适配器（BaseAdapter + ListView 链） | `jo5/y0` | **`iq5/a1`** |
+| 数据容器字段 | `adapter.q` | **`adapter.r`**（`a`=行数、`b`=SparseArray、`c`=HashMap、`d`=List<行>） |
+| 行元素 | `jo5/z`（`z.d` = k4） | **`iq5/a0`**（`a0.d` = k4） |
+| talker 方法 | `k4.i1()` | **`k4.f1()`**（代码里 `f1`/`i1` 双候选） |
+| 长按菜单宿主 | `conversation/s3` | **`conversation/x3`** |
+| 菜单容器 / 菜单项 | `kj5/i4` / `kj5/j4` | **`gl5/h4` / `gl5/i4`** |
+| 菜单点击回调 | `q3.onMMMenuItemSelected` | `gl5/u4` 接口实现（运行时自动翻找） |
 
 ---
 
@@ -114,258 +95,106 @@ app/src/main/java/io/github/wxgroup/reborn/
 │   ├── HostContext.kt                  # 拿 Activity / 跳模块页 / 从 View 里刨 username
 │   ├── GroupCache.kt                   # 分组读取缓存、变更检测与自动刷新、落盘、列表重绘
 │   └── FolderRow.kt                    # 收纳组行的 View 构建与绑定（图标 + 未读角标）
-├── xp/
-│   ├── XposedBridge.kt                 # 薄封装：libxposed 102 的 hook(Executable).intercept 适配
-│   ├── XposedHelpers.kt                # findClass / findAndHookMethod / getObjectField / callMethod
-│   └── XC_MethodHook.kt                # 兼容旧 before/after 回调 + MethodHookParam
+├── xp/                                 # libxposed 102 薄封装（hook/Helper/XC_MethodHook 兼容层）
 ├── core/
-│   ├── GroupProvider.kt                # ContentProvider（fallback，多数机型被 AppsFilter 拦截，见下）
-│   ├── GroupStore.kt                   # 分组读写 + 跨进程通道（以 /data/local/tmp 镜像为主）
-│   ├── GroupModels.kt                  # WxGroup 数据类 + JSON 序列化
+│   ├── GroupProvider.kt                # ContentProvider（fallback，多数机型被 AppsFilter 拦截）
+│   ├── GroupStore.kt                   # 分组/设置/签名读写 + 跨进程镜像通道
+│   ├── GroupModels.kt                  # WxGroup / WxSettings 数据类 + JSON 序列化
+│   ├── GroupTheme.kt                   # 8 套主题 + 72 个单字图标 + 单组独立配色
+│   ├── Updater.kt                      # 检查更新（GitHub Releases latest，零网络库）
+│   ├── WeChatKiller.kt                 # 强杀微信（su 提权 force-stop，两套 UI 共用）
 │   └── WeChatSignatures.kt             # 方法描述符 / 签名解析
 ├── util/
 │   └── ReflectionUtil.kt               # 反射工具（候选名回退 / 子串搜索，版本兼容）
 └── ui/
-    ├── SettingsActivity.kt             # 入口（启动器）+「强杀微信」
-    ├── GroupManageActivity.kt          # 分组管理 + 接收「添加会话到分组」意图
-    ├── SortGroupsActivity.kt           # 分组排序页（☰ 拖拽把手，带跟手动画）
-    └── SignatureActivity.kt            # 在 App 内编辑 / 保存 / 重置签名 JSON
+    ├── MainComposeActivity.kt          # 启动入口（Compose 版设置界面）
+    ├── AppRoot.kt                      # NavigationBar 三 Tab + LargeTitle 折叠 + 页面切换
+    ├── theme/Theme.kt                  # 「海盐薄荷」色彩令牌 + WxRebornTheme（深浅色）
+    ├── state/AppState.kt               # AppViewModel：GroupStore 的 UI 门面（全真实数据）
+    ├── components/SettingsComponents.kt# SettingsGroup/Item/SwitchItem、IconBox/GlyphBox
+    ├── screens/                        # HomeScreen / GroupListScreen / SettingsScreen
+    ├── SettingsActivity.kt             # 旧版 XML 设置页（保留，含导出/导入/通道修复）
+    ├── GroupManageActivity.kt          # 分组管理 + 批量成员管理
+    ├── SortGroupsActivity.kt           # 分组排序页（☰ 拖拽把手）
+    ├── ThemeActivity.kt                # 外观与主题（8 套主题 + 单组配色）
+    └── SignatureActivity.kt            # 签名配置（状态行 / 填充内置 / 在线获取 / 手动编辑）
 
-app/src/main/res/raw/wechat_signatures.json   # 按微信版本的 Hook 签名配置（可编辑）
-app/src/main/resources/META-INF/xposed/java_init.list  # libxposed 102 入口声明（MainHook）
+app/src/main/assets/wechat_signatures.json   # 内置 Hook 签名（8.0.79 实测，随版本发布）
+app/src/main/resources/META-INF/xposed/java_init.list  # libxposed 102 入口声明
 ```
 
-**跨进程数据通道（关键实现细节）**  
-Xposed 的 Hook 跑在**微信进程**里，而分组数据由**模块自己的 App 进程**创建和编辑。两个进程不能直接共享内存，需要一个跨进程通道。
+### 跨进程数据通道（关键实现细节）
 
-在 Android 11+（本机 HyperOS / Xiaomi）上，常规的跨进程方案**全部被 `AppsFilter` 包可见性与 SELinux 拦截**，实测逐一失败：
+Xposed Hook 跑在**微信进程**里，分组数据由**模块 App 进程**创建编辑，两个进程不能直接共享内存。Android 11+（HyperOS）上常规方案**全部被 `AppsFilter` 包可见性与 SELinux 拦截**：
 
-| 方案                                           | 结果                                                                                            |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `ContentProvider`（exported + forceQueryable） | `Can't resolve content provider ... from package` —— AppsFilter 仍拦截（厂商 PMS 忽略 forceQueryable） |
-| `createPackageContext(IGNORE_SECURITY)`      | `Application package ... not found` —— PackageManager 级拦截                                     |
-| `XSharedPreferences`                         | 读出来为空 —— 同样被 AppsFilter/SELinux 挡住                                                            |
-| 模块私有文件 `/data/data/.../files` 直接读            | `ENOENT` —— 微信进程根本看不到模块的数据目录                                                                  |
-| `/sdcard/...` 直接读                            | `EACCES` —— FUSE 不允许任意 app 读                                                                  |
+| 方案 | 结果 |
+| --- | --- |
+| `ContentProvider`（exported + forceQueryable） | `Can't resolve content provider` —— 厂商 PMS 忽略 forceQueryable |
+| `createPackageContext(IGNORE_SECURITY)` | `Application package not found` —— PackageManager 级拦截 |
+| `XSharedPreferences` | 读出来为空 —— 同样被 AppsFilter/SELinux 挡住 |
+| 模块私有文件直接读 | `ENOENT` —— 微信进程看不到模块的数据目录 |
+| `/sdcard/...` 直接读 | `EACCES` —— FUSE 不允许 |
 
-**唯一可行的通道：`/data/local/tmp/` 下的世界可写（1777）文件。**
+**唯一可行的通道：`/data/local/tmp/` 下已存在的世界可写（666）文件。**
 
-- 微信进程**能读** `/data/local/tmp/`。
-- 模块 App 进程**不能新建**该目录下的文件（`EACCES`，SELinux 把新建动作拦了），但**可以覆盖一个已存在的世界可写文件**。
-- 因此做法：设备安装/首次运行时，用 `su` 预创建 `/data/local/tmp/wxgroup_reborn_groups.json` 并 `chmod 666`；之后模块 App 每次改动分组都 `writeText` 覆盖它（并再次 `chmod 666`），微信侧 `GroupStore.getGroupsXposed()` 直接 `File.readText()` 读取。
-- `GroupProvider`（ContentProvider）保留为 fallback，在那些 forceQueryable 真正生效的机型上可用；当前设备走 tmp 文件。
+- 微信进程**能读** `/data/local/tmp/`；模块 App 进程**不能新建**文件（EACCES），但**可以覆盖已存在的世界可写文件**。
+- 因此首次运行用 `su` 预创建 `wxgroup_reborn_{groups,settings}.json` 并 `chmod 666`；之后 App 每次改动都覆盖写（`Os.chmod` 免 fork），微信侧 `getGroupsXposed()` 直接读文件，并用「stamp（mtime+size）比对 + 1.2s 轻量轮询」自动重绘列表。
+- `GroupProvider` 保留为 fallback；写路径带「tmp+rename 失败即退回覆盖写」兜底（`/data/local/tmp` 建不了 tmp 文件）。
+- 静态签名另有「内置 assets 资源」兜底：LSPosed 把模块类与资源载入微信进程，模块 ClassLoader 直接读 `assets/wechat_signatures.json`，完全不经过 IPC，保证 Hook 一定挂得上；App 内保存的自定义签名 revision 更高时优先生效。
 
-> 静态签名另有「内置 raw 资源」兜底：模块类与资源会被 LSPosed 载入微信进程，直接用模块 ClassLoader 读 `res/raw/wechat_signatures.json`，完全不经过任何 IPC，保证 Hook 一定能在微信里挂上。
+### 内联收纳组核心算法（折叠群聊式）
+
+`buildModel(realCount)` 产出虚拟行表：① 分组按（置顶 → order → 创建时间）排序，每组先放一个 `TYPE_HEADER` 行；② 展开的组依次插入其成员（`placed` 去重）；③ 其余真实会话按原顺序追加。`getView/getItem` 按虚拟 position 查表，真实行交还微信原生渲染前把 `args[0]` 还原成真实 index；收纳组头部有独立 viewType，避免 ListView 复用错位。点击判定只信**被点 View 的 tag**（微信上报的 position 不可信），并用 `getPositionForView` 改写回真实位置。
 
 ---
 
 ## 构建
 
-### 环境要求
-
-| 组件          | 版本                                          |
-| ----------- | ------------------------------------------- |
-| JDK         | 17                                          |
-| Android SDK | platform android-37 + build-tools 36.0.0   |
-| Gradle      | 8.13（仓库已带 wrapper）                        |
-| AGP         | 8.13.2                                      |
-| 网络          | 首次 sync 需要连 Maven Central + Google     |
-
-### 命令
+| 组件 | 版本 |
+| --- | --- |
+| JDK | 17 |
+| Android SDK | platform 35 + build-tools 35.0.0 |
+| Gradle | 8.13（仓库带 wrapper） |
+| AGP / Kotlin | 8.13.2 / 2.0.21（Compose 编译器插件随 Kotlin 版本） |
+| Compose BOM | 2024.12.01 + material-icons-extended 1.7.5 |
 
 ```bash
-cd wxgroup-reborn
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-17.jdk/Contents/Home
-export ANDROID_SDK_ROOT=/Users/Mr.li/Library/Android/sdk   # 换成你自己的 SDK 路径
-./gradlew :app:assembleDebug --no-daemon
+./gradlew :app:assembleDebug     # debug 包
+./gradlew :app:assembleRelease   # release 包（本地有 keystore.properties 时自动签名）
 ```
 
-产物：`app/build/outputs/apk/debug/app-debug.apk`（当前约 2.9 MB）。
+正式签名：优先读 gitignored 的 `keystore.properties`（storeFile/storePassword/keyAlias/keyPassword），否则回落环境变量 `KEYSTORE_FILE / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD`（CI 经 GitHub Secrets 注入）。都没有时 release 出未签名包，构建不失败。
+
+**CI**：推 `v*` tag → GitHub Actions 解码 keystore → 构建签名 release → 自动发 GitHub Release。
 
 ---
 
-## 填写方法签名（按微信版本）
+## 更新日志
 
-微信各版本之间会调整内部类名与方法位置，所以 `classes` 里给的是**跨版本相对稳定的类名**，而 `methods` 里的 `methodName` 默认是**空字符串** —— 这些 Hook 在填入真实签名前会被跳过。
+### v1.0.1（2026-10-23）
 
-`wechat_signatures.json` 结构：
+- **重大修复：内置签名库移至 assets**。release 包经 aapt2 资源路径优化后 `res/raw/` 路径失效，hook 端从 v1.0.0 起一直读不到内置签名（靠 Provider 兜底）；assets 路径恒定，双进程稳定可读。
+- 签名页一键获取：版本匹配状态行、「填充内置签名」、「在线获取最新」（GitHub raw，适配新微信无需发版）。
+- manifest 增加 `<queries>` 解决 Android 11+ 包可见性（读取已装微信版本号）。
 
-```json
-{
-  "wechatVersion": "8.x.x",
-  "classes": {
-    "ConversationUI":   "com.tencent.mm.ui.conversation.BaseConversationUI",
-    "ConversationBoxUI":"com.tencent.mm.ui.conversation.ConvBoxServiceConversationUI",
-    "LauncherUI":       "com.tencent.mm.ui.LauncherUI",
-    "MvvmList":         "com.tencent.mm.plugin.mvvmlist.MvvmList",
-    "Storage":          "com.tencent.mm.storage"
-  },
-  "methods": {
-    "ConversationOnCreateContextMenu": { "class": "ConversationUI", "methodName": "", "params": ["android.view.ContextMenu", "android.view.View"], "ret": "void" },
-    "ConversationOnMenuItemSelected":  { "class": "ConversationUI", "methodName": "", "params": ["int", "android.view.MenuItem"], "ret": "boolean" }
-    /* …其余方法同理… */
-  }
-}
-```
+### v1.0.0（2026-10-23）
 
-### 怎么填真实签名
+- **Jetpack Compose + Material 3 设置界面全面重做**：三 Tab（首页状态总览 / 分组管理 / iOS 风格设置列表）、「海盐薄荷」主题、Large Title 折叠、深浅色跟随。
+- 设置界面全量接入 GroupStore 真实数据源：分组增删改序、偏好开关、主题选择全部落盘并实时同步微信进程。
+- 分组页：长按拖动排序、右滑重命名、左滑删除、未读红角标、置顶/免打扰快捷开关。
+- 新增检查更新（GitHub Releases latest + 语义化版本比较 + 更新弹窗）；正式签名发布流程（本地 keystore / CI Secrets 双通道）。
+- 主题系统：8 套主题 + 单组独立配色 + 深浅色，取色与微信进程内渲染共用一套令牌。
 
-1. 按你所用微信版本，找到目标方法，记录它的：方法名、`params`（参数类型）、`ret`（返回类型）。
-   可以照着模块日志来对照：Hook 命中/跳过都会打日志，名字填错只会「跳过」而不会崩微信。
-2. 填进 `methodName` / `params` / `ret`。
-   - 参数/返回类型写法示例：`int`、`void`、`java.lang.String`、`[Ljava/lang/String;`、`android.view.View`、`android.view.ContextMenu`、`android.view.MenuItem`、`java.util.List`、`com.tencent.mm.storage.Conversation`。
-   - `params` 留空数组 `[]` 表示无参。
-3. 两种方式生效：
-   - **构建期**：直接改 `app/src/main/res/raw/wechat_signatures.json` 后重新 `assembleDebug`。
-   - **运行期（免重打包）**：打开模块 App → 签名设置 → 编辑 → 保存。这会写一份 `signature.json` 到 App 私有目录，覆盖内置默认；还提供「重置」回退到内置配置。
+### v0.1.x（2026-10-17 ~ 10-20，详见旧版 README 历史）
 
-> 含 `"TODO"` 或为空字符串的 `methodName` 会被自动跳过，不会尝试 hook。
-
-### 微信 8.0.79 实测签名（当前内置，2026-10-17 适配）
-
-8.0.79（versionCode 3182）混淆名整体重排（`jo5` 包被协程 lambda 类占用），逐项改名如下；均为静态分析 base.apk + 真机运行验证：
-
-| 角色 | 8.0.78 | 8.0.79 |
-| --- | --- | --- |
-| 会话适配器（仍是 BaseAdapter + ListView 链） | `jo5/y0` | **`iq5/a1`** |
-| 数据容器字段 | `adapter.q`（jo5/f） | **`adapter.r`**（iq5/f，布局不变：`a`=行数、`b`=SparseArray、`c`=HashMap、`d`=List<行>） |
-| 行元素 | `jo5/z`（`z.d` = k4） | **`iq5/a0`**（仍是 `a0.d` = k4） |
-| talker 方法 | `k4.i1()`（父类 im/j2） | **`k4.f1()`**（父类改 hn/j2；代码里 `f1`/`i1` 都会尝试） |
-| 长按菜单宿主（OnCreateContextMenuListener） | `com.tencent.mm.ui.conversation.s3` | **`com.tencent.mm.ui.conversation.x3`**（结构同 s3：`g`=talker、`h`=k4、`n`=gl5/u4 回调） |
-| 菜单容器（ContextMenu 实现 / MMPopupMenu） | `kj5/i4` | **`gl5/h4`** |
-| 菜单项（MenuItem 实现，含 `c()Z`） | `kj5/j4` | **`gl5/i4`** |
-| 菜单点击回调 | `q3.onMMMenuItemSelected` | 实现类换成 `gl5/u4` 接口的实现（运行时从 x3 字段自动翻，无需硬编码） |
-
-- `getItem(I)` 的实现变了：8.0.79 是 `r.b.get(pos)`→key 再 `r.c.get(key)`→k4（8.0.78 是直接索引列表）；本模块只改写 `args[0]` 后透传，不受影响。
-- `getView` 仍直接索引 `r.d.get(pos)` —— 虚位重映射方案不变。
-- 8.0.79 本机运行时类加载器是 `PathClassLoader(base.apk)`，Tinker patch 与 base 同 hash，不构成「影子类」问题。
-- 代码侧已做版本自适应：数据容器字段 `r`/`q` 双候选、talker 方法 `f1`/`i1` 双候选，未来小版本重排只需改 `wechat_signatures.json`（revision+1）。
-
-### 微信 8.0.78 实测签名（历史参考）
-
-以下均为在 8.0.78 真机上运行时实测确认：
-
-- **会话菜单是 `View.OnCreateContextMenuListener` 方式**，8.0.78 上菜单宿主类是 **`com.tencent.mm.ui.conversation.s3`**（实现 `OnCreateContextMenuListener`）；`onCreateContextMenu` 是接口方法，名字稳定，字段 `g` 即 talker。给它注入「添加到分组」菜单项并自带 `OnMenuItemClickListener`（8.0.x 已无 `onContextItemSelected`，微信改用 `OnMenuItemClickListener` 分发）。
-- **会话列表是 `BaseAdapter`（`jo5/y0`），不是 RecyclerView！** 这是做内联折叠收纳组的基础。`getView` 按 `p1`（position）直接索引内部数据列表 `jo5/f.d`，**不调用 `getItem`**，所以安全地把真实行的虚拟 position 映射回真实 index 不会二次重映射。`getItem(position)` 返回 `k4`（`com.tencent.mm.storage.k4`），`k4` 经 `im/j2` 持有 `field_username`（= talker）。
-- 内置 `wechat_signatures.json` 已填好 8.0.78 的全部 8 个适配器方法（用于内联收纳组），其中 4 个是 `BaseAdapter` **继承**方法（`isEnabled` / `areAllItemsEnabled` / `getItemViewType` / `getViewTypeCount`），需用「遍历超类 + `XposedBridge.hookMethod`」才能挂上（`findAndHookMethod` 只认本类声明方法）：
-
-  | key | 方法 | 作用 |
-  | --- | --- | --- |
-  | `ConversationOnCreateContextMenu` | `s3.onCreateContextMenu` | 注入「添加到分组 / 新建分组 / 移出分组」菜单项 |
-  | `ConversationGetCount` | `jo5/y0.getCount` | 返回「虚拟行数 = 真实数 + 收纳组头部数」 |
-  | `ConversationGetItem` | `jo5/y0.getItem` | 虚拟位↔真实 index 映射 |
-  | `ConversationGetView` | `jo5/y0.getView` | 头部位渲染折叠收纳组行；真实位把虚拟 position 还原成真实 index 后交给微信原生渲染 |
-  | `ConversationGetItemViewType` / `ConversationGetViewTypeCount` | `BaseAdapter.*`（继承） | 给收纳组头部一个独立 viewType，避免 ListView 复用把自定义头部塞进错 scrap |
-  | ~~`ConversationIsEnabled` / `ConversationAreAllItemsEnabled`~~ | `BaseAdapter.*`（继承） | **不要挂！** 让收纳组头部返回 `false` 会让 `AbsListView.onInterceptTouchEvent` 不进 `TOUCH_MODE_DOWN`，触摸被行 View 吃掉：从收纳组行上起手拖动无法滚动列表，且行必须自己 clickable 去和微信的监听器抢事件 → 偶发闪退。收纳组行照旧「可点」，点击统一由框架级 `AdapterView.performItemClick` 拦截。 |
-
-> 微信在 `ListView.setAdapter` 时会把我们的 `jo5/y0` 包进 `HeaderViewListAdapter`，而 AOSP 的 `HeaderViewListAdapter` 会把 `isEnabled`/`getItemViewType`/`getViewTypeCount` 转发给被包裹的适配器并把头部偏移扣掉——所以虚拟 position 能原样到达我们的 Hook。
-
-### 内联收纳组的核心算法（折叠群聊式）
-
-`buildModel(realCount)` 产出 `List<VEntry>`：
-
-1. 所有收纳组按（置顶 → 名称）排序，每组先放一个 `TYPE_HEADER` 行；
-2. 展开（`expanded`）的组，依次把组内成员（且确实在列表里、`placed` 去重）以 `TYPE_REAL`（携带真实 index）插入；
-3. 最后遍历真实 `[0, realCount)`，非组成员按原顺序以 `TYPE_REAL` 追加。
-4. `getView`/`getItem`/`isEnabled`/`getItemViewType` 全部按虚拟 position 查这张表，真实行在交给微信原生渲染前把 `args[0]` 还原成真实 index。
-
-> 换微信版本时若 `jo5/y0` / `jo5/f.d` / `k4.field_username` / `s3` 改名，需更新 `wechat_signatures.json` 的 `classes`/`methods` 与 `buildModel` 里的字段路径（`q.d` → 实际数据列表字段名）。
+- libxposed API 82 → 102 迁移；适配微信 8.0.79 混淆重排（签名 revision 7）。
+- 内联折叠收纳组（接管 BaseAdapter 虚拟行模型）；微信内建分组 / 批量成员管理 / 分组备份导入导出。
+- 渲染热路径优化（反射缓存、未读快照、读路径零写入、原子写）；跨进程同步数据竞争修复；同步通道自检与一键 root 修复。
 
 ---
 
-## 在 LSPosed 里安装与激活
+## 已知限制
 
-1. 像装普通 App 一样安装 `app-debug.apk`。
-2. 打开 **LSPosed Manager → 模块**，勾选启用 **wxgroup-reborn**。
-3. 在该模块的 **作用域** 里，确保 **微信 (com.tencent.mm)** 已勾选（manifest 里也已内置默认作用域 `com.tencent.mm`）。
-4. **（一次性，需 root）预创建跨进程镜像文件**——这是 8.0.78 / HyperOS 上的必要步骤，因为模块 App 进程在 SELinux 下无法自行在 `/data/local/tmp` 新建文件，只能覆盖已存在的世界可写文件：
-   ```bash
-   adb shell su -c 'for f in groups settings; do p=/data/local/tmp/wxgroup_reborn_$f.json; touch $p && chmod 666 $p; done'
-   ```
-   > 也可以直接在模块 App 设置页点「用 root 创建同步文件」（通道未就绪时才显示）。文件大小为 0 也无妨，模块每次保存都会覆盖。
-5. 重启微信（或强制停止后重新打开）使 Hook 生效。
-6. **在微信里使用**（全部操作都在微信界面内完成，不需要开模块 App）：
-   - 会话列表顶部会出现**分组收纳行**（折叠态，点击展开/收起）。
-   - 把联系人或群聊收进分组：**长按某个聊天 → 「添加到分组」** → 选已有分组，或选「＋ 新建分组…」当场建一个。
-   - 把会话移出分组：**长按该会话 → 「移出分组「X」」**。若它已在某个分组里，这一项才会出现（会话被收进分组后仍能从分组内部长按到它）。
-   - 调整分组顺序：**长按收纳组行 → 「上移」/「下移」/「拖动排序…」**。
-   - 重命名 / 清空成员 / 删除分组：**长按收纳组行 → 对应菜单项**。
-   - （分组数据改完会自动镜像到 `/data/local/tmp/wxgroup_reborn_groups.json`，微信会立刻刷新列表；必要时可重启微信。）
-
----
-
-## 本次（8.0.78）实测中修复的关键问题
-
-分组功能在真机验证时一度「完全不生效」，根因是三个隐蔽 bug，已全部修复：
-
-1. **签名 JSON 字段名不匹配 → 所有 Hook 被静默跳过。**  
-   `MethodDescriptor.fromJson` 读的是 `"name"` 字段，但 `wechat_signatures.json`（以及 `toJson`）用的是 `"methodName"`。导致解析后 `methodName` 永远为空 → `isValid==false` → 12 个方法**全部跳过**，模块等于空跑。修复：统一读 `"methodName"`（兼容旧的 `"name"`）。
-2. **类名里的斜杠 `jo5/y0` → `findClass` 找不到类。**  
-   形如 `jo5/y0` 的类名必须转成二进制名 `jo5.y0` 才能被 `XposedHelpers.findClass` 解析。修复：`ReflectionUtil.findClass` 里 `name.replace('/', '.')`。这是 `ConversationGetView`（视觉标记）能挂上的前提。
-3. **基本类型参数 `int` 解析为 null → `getView` Hook 被跳过。**  
-   `ReflectionUtil.resolveClass("int")` 原实现只处理引用类型，返回 null，使 `paramClasses.any { it == null }` 为真而跳过。修复：`resolveClass` 显式返回 `Int::class.javaPrimitiveType` 等基本类型 Class。
-
-附带修正的体验问题：talker 提取对 `filehelper` 这类特殊账号被 `looksLikeUsername` 误判而回退失败 → 改为直接信任 `k4.field_username`（最可靠的字段），仅在为空时才做字段扫描兜底。
-
-> 验证方法：开模块 App 建好分组后，重启微信并 `adb logcat | grep WxGroupReborn`，应看到 8 条「已挂载 Hook: …」与（收纳组生效时）`收纳组生效: 分组=N, 虚拟行=M (真实=K, 收拢成员=L)`。
-
-### 内联收纳组重写时修复的新坑（8.0.78 / HyperOS 真机）
-
-把「背景着色」升级为「内联折叠收纳组」（接管 `BaseAdapter`）时，又踩到并修掉以下真机崩溃/失效问题：
-
-1. **`isEnabled` / `getItemViewType` 等继承方法挂不上** → 点收纳组头部时微信点击分发 NPE 崩溃（这正是早期 FAB 方案闪退的根因之一）。`findAndHookMethod(name, Class...)` 只认本类声明方法，而它们继承自 `BaseAdapter`。修复：新增 `hookInherited()`——遍历 `jo5/y0` 的超类/接口链找到目标 `Method`，再用 `XposedBridge.hookMethod` 挂，并用 `adapterClass.isInstance(thisObject)` 严格守卫只作用于会话适配器。
-2. **`getCount()` 在未初始化时返回 `-1` 哨兵值** → `Array(realCount)` 抛 `NegativeArraySizeException`，整个虚拟模型构建失败、列表空白。修复：`realCount < 0` 时直接透传原始值、不构建模型。
-3. **`adapter as Context` 强转抛 `ClassCastException`**（`jo5/y0` 不是 `Context`）→ 每次 `getCount` 静默失败。修复：`getGroupsXposed(ctx: Context?)` 参数改为可空，tmp 文件读取不依赖 Context。
-4. **ListView 复用错位风险**：给收纳组头部独立的 `getItemViewType`，避免自定义 View 被塞进其它 scrap 堆导致后续崩溃。
-5. **早期 FAB 方案被废弃**：改为用户要的内联收纳组（像折叠群聊），不再注入浮动按钮。
-
-### 第二轮真机反馈修复：「点不开 / 添加到分组不生效」
-
-用户反馈 `分组点不开`、`添加到分组也不生效`。排查出两个**确定性**根因（外加一个体验问题）：
-
-1. **收纳组行被自己设成了「禁用」→ 点击回调永远不执行（点不开的真因）。**  
-   `buildFolderView` 里给整行设了 `isEnabled = false`。Android 的 `View.onTouchEvent` 在 `DISABLED` 时会**提前 return**：它虽然仍返回 `clickable`（即继续消费触摸），但**永远不会调用 `performClick()`**，所以 `OnClickListener` 根本不会触发；同时因为事件被消费，ListView 也不会走 item 点击。表现就是「点一下毫无反应」。  
-   **修复**：整行保持 `isEnabled = true` + `clickable`，由行自己的监听器处理点击/长按；「行不可被微信当会话点开」改由适配器的 `isEnabled(pos)=false` 负责（两者职责不同，之前混淆了）。
-2. **「添加到分组」弹窗在分组列表加载之前就弹出了 → 永远只能「新建分组」（不生效的真因）。**  
-   `GroupManageActivity.onCreate` 里先 `showAddToGroupDialog()`、后 `refresh()`，导致弹窗构造 `names` 时 `groups` 还是**空列表**，于是只列出一项「（新建分组）」，且 `which == groups.size`（0==0）恒成立，**无法选已有分组**。  
-   **修复**：把 `refresh()` 提到处理 intent 之前；并给「已加入 X」「已新建 X 并加入」加 Toast 反馈。  
-   （设备上的实证：用户建的分组 `1` 的 `members` 为空 `[]`，与「加不进去」完全吻合。）
-3. **改完分组要重启微信才看得到（体验问题）。**  
-   模块 App 写入分组后，微信侧列表不会自动重绘。  
-   **修复**：新增 `GroupStore.groupsStamp()`（镜像文件 `lastModified*1e6 + length`）；Hook 在 `getCount` 时比对变更戳，变了就清缓存并 post 一次 `adapter.notifyDataSetChanged()`（只 post，不在布局流程里同步调用，避免 ListView 重入）。另起一个 1.2s 的轻量轮询（仅一次 `File` stat，开销可忽略），使列表空闲时也能及时刷新。
-
-
-### 第三轮真机反馈修复：「点分组下面的会话，把分组展开了」/「那两个群点不开」
-
-用户反馈：点击收纳组**下面**的普通会话，结果把某个收纳组展开了；后来升级成「那两个群直接点不开了」。这一轮挖到的根因最隐蔽，但结论最有普适性。
-
-1. **`position` 完全不可信 —— 被点的那个 View 才是唯一事实。**（本轮最关键的发现）  
-   `onItemClick` / `performLongPress` 收到的 `position` 并不等于被点行的位置。真机实测：`微信报 33 → 实际 15`、`微信报 20 → 实际 16`、`微信报 15 → 实际 17`。ListView 的 `mTouchPosition` 是**按下瞬间**抓的，中间只要刷新过一次列表（我们插入了收纳组行、或微信自带的「Windows 微信已登录」横幅增删 146px 导致整表位移），按下位置和抬手位置就指向两行不同的行。  
-   **修复**：判断「点的是不是收纳组行」只看 **被点 View 的 `tag`**（我们给它放了 `FolderHolder`），并用 `ListView.getPositionForView(view)` 把真实的 position **改写回去**再交给微信。不改写的话微信会拿着错的 position 去 `getItem(pos - headerCount)`，拿到 `null` 就 `return`（日志 `null user at position = …`）——表现就是「点不开」。
-2. **跨类型复用 `convertView` → 会话行显示成了收纳组行。**  
-   ListView 按 `getItemViewType` 分桶回收；一旦这个 hook 没生效，`FolderHolder` 行会被当成会话行的 `convertView` 交给微信的 `getView`，绑定失败后又只能原样返回，于是那一行「变成」了展开/收纳行。  
-   **修复**：双保险——`getView` 拿到 `tag is FolderHolder` 的 convertView 就丢弃（传 `null` 让微信重建），且真实行路径/兜底路径都拒绝返回收纳组行。
-3. **Tinker 热修导致类加载器有两套 → 所有 Hook 挂在错的类上。**  
-   微信 8.0.78 带 Tinker 补丁，运行时类来自 `DelegateLastClassLoader` 加载的 `tinker_classN.apk`，与 `lpparam.classLoader` 解析出的 `Class` **不是同一个对象**，于是「hook 成功但毫无效果」。引导改为从 `android.widget.AbsListView.setAdapter` 的 `arg[0]`（活的 adapter 实例）取它真正的 `classLoader`，再在它上面挂全部 Hook。
-4. **引导时的类加载器必须校验，否则会被 `BootClassLoader` 污染。**  
-   微信自己的对话框/其它列表用的是 framework 的 `ListView + ArrayAdapter`，那类 adapter 的 `classLoader` 是 `BootClassLoader`。不校验就把它记成「运行时加载器」，既装不上任何 Hook，又会占住 `hookedLoader` 让真正的加载器进不来。  
-   **修复**：`canResolveWeChat(loader)` —— 能 `findClass` 出会话适配器才算数。注意签名里是 `jo5/y0` 这种斜杠写法，`Class.forName` 不认斜杠，必须走 `ReflectionUtil.findClass` 做归一化（这里是作者自己踩过的第二遍坑）。
-5. **跨进程同步会丢数据：模块 App 启动时用陈旧副本覆盖镜像。**  
-   `ensureDefaults()` 原本的顺序是 `importFromTmp()` → `mirrorGroupsToTmp()`，而 `importFromTmp` 只按 id 判断「本地有没有」，同 id 时保留本地旧值 —— 于是模块 App 一启动就把微信侧刚写进镜像的新成员覆盖掉了（实测一次丢了 2 个成员）。  
-   **修复**：① `importFromTmp` 同 id 时**以镜像为准**（镜像由微信进程写，是会话列表真正在用的那份）；② 启动时**不再回写镜像**，只在用户真的在模块 App 里改分组时才写。
-
----
-
-## 已知限制 / 注意
-
-- 微信版本更新频繁，内部类名/字段位置可能变化，**必须为你的具体版本提供方法签名**（见上）。内置只给了类名。
+- 微信版本更新频繁，内部类名/字段可能变化；版本不匹配时到签名页「在线获取最新」或手动逆向填写，填错的条目会静默跳过（见 Xposed 日志），不会崩微信。
+- 模块 App 的「模块状态」用的是同步镜像通道就绪与否作为代理指标——LSPosed 是否真正激活需在 LSPosed Manager 中确认。
 - 本模块仅供学习与研究，使用前请自行评估是否违反微信 ToS 及当地法律。
-- 内联收纳组依赖直接读微信适配器内部数据列表字段（`jo5/f.d`、`k4.field_username`）；这些字段可能随版本改名，签名或字段路径填错时对应功能会**静默跳过**（写在 Xposed 日志里），而不是让微信崩溃。所有 Hook 均已包 try/catch + 守卫。
-
----
-
-## 代码组织
-
-- `core/` —— 分组模型、存储（微信私有目录 + 跨进程镜像）、外观主题（72 个 emoji 图标 + 10 色配色）。
-- `hook/` —— 全部 Hook 实现，按功能拆分：列表接管、点击/长按拦截、二级页面、返回键、菜单注入、分组操作、缓存刷新。
-- `ui/` —— 模块 App（分组管理、签名配置）。
