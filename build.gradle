@@ -1,7 +1,9 @@
 // 微信会话分组模块（libxposed API 102）
 // 主模块仅依赖官方 Xposed API；微信版本相关的签名走 assets/wechat_signatures.json，运行时读取。
 buildscript {
-    ext.kotlin_version = '1.9.22'
+    // Compose 编译器插件版本需与 Kotlin 版本对齐：Kotlin 2.0.21 → Compose 编译器 2.0.21
+    // （Kotlin 1.9.x 时代要查版本矩阵，2.x 起版本即对齐，省事）
+    ext.kotlin_version = '2.0.21'
     repositories {
         google()
         mavenCentral()
@@ -10,5 +12,6 @@ buildscript {
     dependencies {
         classpath 'com.android.tools.build:gradle:8.13.2'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath 'org.jetbrains.kotlin.plugin.compose:org.jetbrains.kotlin.plugin.compose.gradle.plugin:2.0.21'
     }
 }

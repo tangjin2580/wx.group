@@ -20,6 +20,7 @@ import java.net.URL
  */
 object Updater {
 
+    private const val TAG = "WgUpdater"
     private const val REPO = "tangjin2580/wx.group"
     private const val API = "https://api.github.com/repos/$REPO/releases/latest"
     private const val RELEASES_PAGE = "https://github.com/$REPO/releases/latest"
@@ -52,8 +53,11 @@ object Updater {
             readTimeout = 8000
         }
         try {
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
+            val code = conn.responseCode
+            android.util.Log.i(TAG, "fetch: HTTP $code url=$API")
+            if (code != HttpURLConnection.HTTP_OK) return null
             val text = conn.inputStream.bufferedReader().use { it.readText() }
+            android.util.Log.i(TAG, "fetch: body ${text.length} bytes, head=${text.take(120)}")
             val j = JSONObject(text)
             val tag = j.optString("tag_name", "")
             val version = tag.removePrefix("v").trim()
@@ -135,7 +139,16 @@ object Updater {
 
     private fun onResult(activity: Activity, rel: ReleaseInfo, manual: Boolean) {
         val cur = currentVersion(activity)
-        if (compareVersion(rel.version, cur) > 0) {
+        val cmp = compareVersion(rel.version, cur)
+        android.util.Log.i(TAG, "onResult: remote=${rel.version} current=$cur cmp=$cmp manual=$manual url=${rel.downloadUrl}")
+        if (cmp > 0) {
+            // 先弹一条 Toast：Dialog 需要有效 window token，App 不在前台时会被系统直接丢掉，
+            // Toast 走独立图层，一定能被用户看到（也是折叠屏/分屏场景下的兜底）
+            Toast.makeText(
+                activity,
+                activity.getString(R.string.update_new_version, rel.version),
+                Toast.LENGTH_LONG
+            ).show()
             showUpdateDialog(activity, rel, cur)
         } else if (manual) {
             Toast.makeText(
@@ -147,14 +160,25 @@ object Updater {
     }
 
     private fun showUpdateDialog(activity: Activity, rel: ReleaseInfo, cur: String) {
+        // Activity 已经 finishing/destroyed（或被系统切到后台）时不要再弹 Dialog —— 会抛
+        // BadTokenException 或者弹出来立刻被销毁。自动检查场景下直接跳过即可。
+        if (activity.isFinishing || activity.isDestroyed) {
+            android.util.Log.i(TAG, "showUpdateDialog: activity not alive, skip dialog")
+            return
+        }
         val notes = rel.body.trim().let { if (it.length > 400) it.take(400) + "…" else it }
-        AlertDialog.Builder(activity)
-            .setTitle(activity.getString(R.string.update_dialog_title, rel.version))
-            .setMessage(activity.getString(R.string.update_dialog_msg, cur, rel.version, notes))
-            .setPositiveButton(R.string.update_btn_download) { _, _ -> openUrl(activity, rel.downloadUrl) }
-            .setNeutralButton(R.string.update_btn_view) { _, _ -> openUrl(activity, rel.htmlUrl) }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+        try {
+            AlertDialog.Builder(activity)
+                .setTitle(activity.getString(R.string.update_dialog_title, rel.version))
+                .setMessage(activity.getString(R.string.update_dialog_msg, cur, notes))
+                .setPositiveButton(R.string.update_btn_download) { _, _ -> openUrl(activity, rel.downloadUrl) }
+                .setNeutralButton(R.string.update_btn_view) { _, _ -> openUrl(activity, rel.htmlUrl) }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        } catch (t: Throwable) {
+            // 弹不出来也不能崩：Toast 已经告知过用户有新版本
+            android.util.Log.w(TAG, "showUpdateDialog failed: ${t.message}")
+        }
     }
 
     private fun openUrl(activity: Activity, url: String) {

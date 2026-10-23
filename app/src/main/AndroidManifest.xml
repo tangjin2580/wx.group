@@ -20,16 +20,23 @@
         <!-- ===== 设置入口 =====
              用 NoActionBar 主题：页面自带顶部应用栏（标题 + 版本），
              去掉系统 ActionBar 避免和页面里的标题重复。 -->
+        <!-- 新的设置界面（Compose 版，作为启动入口） -->
         <activity
-            android:name=".ui.SettingsActivity"
+            android:name=".ui.MainComposeActivity"
             android:exported="true"
-            android:label="@string/app_name"
-            android:theme="@style/AppTheme.NoActionBar">
+            android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 旧版设置页（XML + AppCompat）：暂时保留，后续清理时删除 -->
+        <activity
+            android:name=".ui.SettingsActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/AppTheme.NoActionBar" />
 
         <activity
             android:name=".ui.GroupManageActivity"

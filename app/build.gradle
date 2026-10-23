@@ -1,5 +1,6 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
+apply plugin: 'org.jetbrains.kotlin.plugin.compose'
 
 android {
     namespace 'io.github.wxgroup.reborn'
@@ -10,8 +11,12 @@ android {
         applicationId 'io.github.wxgroup.reborn'
         minSdk 24
         targetSdk 34
-        versionCode 7
-        versionName '1.0.0'
+        // 版本号可被 -PversionCodeOverride / -PversionNameOverride 覆盖
+        // （CI 里从 tag 推导版本、或本地做灰度包时用得上）
+        def vcProp = project.findProperty('versionCodeOverride')
+        def vnProp = project.findProperty('versionNameOverride')
+        versionCode vcProp == null ? 7 : (vcProp as Integer)
+        versionName vnProp == null ? '1.0.0' : vnProp.toString()
     }
 
     // ── 正式签名（条件启用）──────────────────────────────────────────────
@@ -53,6 +58,11 @@ android {
         }
     }
 
+    // 开启 Compose（AGP 8.x 起不再需要 composeOptions.kotlinCompilerExtensionVersion）
+    buildFeatures {
+        compose true
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -77,4 +87,22 @@ dependencies {
     compileOnly 'io.github.libxposed:api:102.0.0'
 
     implementation 'androidx.appcompat:appcompat:1.6.1'
+
+    // ══ Jetpack Compose（设置界面重做）══════════════════════════════════
+    // BOM 统一版本：material3 / ui / foundation 等不写死版本
+    implementation platform('androidx.compose:compose-bom:2024.12.01')
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-graphics'
+    implementation 'androidx.compose.ui:ui-tooling-preview'
+    implementation 'androidx.compose.material3:material3'
+    // 线性图标（Material Symbols Rounded 风格）
+    // 注意：material-icons-core 只带一小组核心图标，Folder / Palette / PushPin 等都不在里面，
+    // 这里必须用 extended（完整图标集），否则编译报 Unresolved reference。
+    implementation 'androidx.compose.material:material-icons-extended:1.7.5'
+    // Activity / ViewModel / Navigation 的 Compose 桥接
+    implementation 'androidx.activity:activity-compose:1.9.3'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7'
+    implementation 'androidx.navigation:navigation-compose:2.8.5'
+
+    debugImplementation 'androidx.compose.ui:ui-tooling'
 }
