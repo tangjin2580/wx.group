@@ -3,6 +3,7 @@ package io.github.wxgroup.reborn.hook
 import android.view.SoundEffectConstants
 import android.view.View
 import android.widget.AdapterView
+import android.widget.ListView
 import io.github.wxgroup.reborn.xp.XC_MethodHook
 import io.github.wxgroup.reborn.xp.XC_MethodHook.MethodHookParam
 import io.github.wxgroup.reborn.xp.XposedBridge
@@ -47,20 +48,33 @@ internal fun ConversationGroupHook.installItemClickInterceptor() {
                 try {
                     val parent = param.thisObject
                     if (!isOurListView(parent)) return
-                    correctTapArgs(param)
                     val pos = param.args.getOrNull(1) as? Int ?: return
                     val view = param.args.getOrNull(0) as? View
-                    // 「分组」小节标题：吃掉，别往下传
-                    if (isSectionPosition(parent, pos)) {
+                    // 统一判定：优先用按下探测的屏幕坐标结果，绕开框架给错的 position/view
+                    val r = resolveTap(parent, view, pos)
+                    if (r.kind == TAP_FOLDER) {
+                        val g = sortedGroups().firstOrNull { it.id == r.groupId }
+                        view?.playSoundEffect(SoundEffectConstants.CLICK)
+                        logItemDispatch(r.view, parent, r.position, "收纳组行「${g?.name ?: r.groupId}」→ 展开/折叠")
+                        handleHeaderTap(r.groupId ?: return, r.view)
                         param.result = true
                         return
                     }
-                    val g = folderGroupOf(view, parent, pos) ?: return
-                    // 收纳组行：我们处理，阻止微信把虚拟行当真实会话处理
-                    view?.playSoundEffect(SoundEffectConstants.CLICK)
-                    logItemDispatch(view, parent, pos, "收纳组行「${g.name}」→ 展开/折叠")
-                    handleHeaderTap(g.id, view)
-                    param.result = true
+                    if (r.kind == TAP_SECTION) {
+                        param.result = true   // 小节标题：吃掉，别往下传
+                        return
+                    }
+                    if (r.kind == TAP_REAL) {
+                        // 用可靠的子 View + 位置修正参数，让微信（及其监听器）拿到对的行
+                        param.args[0] = r.view ?: view
+                        param.args[1] = r.position
+                        if (clickPassLogged < 60) {
+                            clickPassLogged++
+                            log("performItemClick 放行(非组行): 探测位置=${downPos} 转发 pos=${r.position} tag=${(r.view ?: view)?.tag?.javaClass?.name ?: "null"} openGroupId=$openGroupId")
+                        }
+                        return
+                    }
+                    // TAP_UNKNOWN：保持原参数，交给微信原逻辑
                 } catch (t: Throwable) {
                     log("收纳组点击拦截异常: ${t.javaClass.simpleName}: ${t.message}")
                 }
@@ -142,7 +156,7 @@ internal fun ConversationGroupHook.installConsumerHook(cls: Class<*>): Unit {
         XposedBridge.hookMethod(m, object : XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 try {
-                    if (consumerLogged < 3) {
+                    if (consumerLogged < 10) {
                         consumerLogged++
                         val v = param.args.getOrNull(1) as? View
                         log("消费方 ${cls.simpleName}.onItemClick 收到: pos=${param.args.getOrNull(2)}, viewTag=${v?.tag?.javaClass?.simpleName}")
@@ -167,35 +181,24 @@ private class OurItemClickListener(
         var p = position
         try {
             if (host.isOurListView(parent)) {
-                if (host.isSectionPosition(parent, position)) return   // 小节标题：不响应
-                val g = host.folderGroupOf(view, parent, position)
-                if (g != null) {
-                    host.handleHeaderTap(g.id, view)
-                    return
-                }
-                val np = host.truePosition(parent, view, position)
-                if (np != position) {
-                    if (host.correctLogged < 12) {
-                        host.correctLogged++
-                        host.log("纠正列表点击位置(监听器): 微信报 $position → 实际 $np")
+                val r = host.resolveTap(parent, view, position)
+                when (r.kind) {
+                    TAP_FOLDER -> { host.handleHeaderTap(r.groupId ?: return, r.view); return }
+                    TAP_SECTION -> return   // 小节标题：不响应
+                    TAP_REAL -> {
+                        p = r.position
+                        val fwdView = r.view ?: view
+                        if (!host.canForwardToWeChat(parent, fwdView, p)) {
+                            host.log("点击未放行: position=$p 不在当前模型内（过期子行）")
+                            return
+                        }
+                        orig.onItemClick(parent, fwdView, p, id)
+                        return
                     }
-                    p = np
-                }
-                if (host.clickPassLogged < 5) {
-                    host.clickPassLogged++
-                    val hv = host.headerCount(parent)
-                    val e = host.legacyModel?.entries?.getOrNull(p - hv)
-                    host.log(
-                        "点击放行给微信: position=$p（原报 $position）, header=$hv, " +
-                            "entry(pos-$hv)=${if (e == null) "-" else if (e.type == TYPE_HEADER) "H" else "R(real=${e.realPos})"}, " +
-                                "viewTag=${view?.tag?.javaClass?.simpleName}"
-                    )
-                }
-                // 模型刚切换（进出二级页面）时 ListView 可能还留着旧子 View，
-                // 这时位置/视图对不上，交给微信会按会话行结构 findViewById 拿到 null → 闪退。
-                if (!host.canForwardToWeChat(parent, view, p)) {
-                    host.log("点击未放行: position=$p 不在当前模型内（过期子行）")
-                    return
+                    else -> {
+                        // TAP_UNKNOWN：退回原参数，仍做一致性校验
+                        if (!host.canForwardToWeChat(parent, view, position)) return
+                    }
                 }
             }
         } catch (t: Throwable) {
@@ -248,19 +251,24 @@ private class OurItemLongClickListener(
         var p = position
         try {
             if (host.isOurListView(parent)) {
-                if (host.isSectionPosition(parent, position)) return true   // 小节标题：不响应
-                val g = host.folderGroupOf(view, parent, position)
-                if (g != null) return host.handleHeaderLongPress(view, g)
-                val np = host.truePosition(parent, view, position)
-                if (np != position) {
-                    host.log("纠正列表长按位置: 微信报 $position → 实际 $np")
-                    p = np
-                }
-                // 同上：过期子行不能交给微信的长按处理器（它会 findViewById 自己的
-                // 会话行子控件，拿到 null 直接 NPE）。宁可不弹菜单，也不能闪退。
-                if (!host.canForwardToWeChat(parent, view, p)) {
-                    host.log("长按未放行: position=$p 不在当前模型内（过期子行）")
-                    return true
+                val r = host.resolveTap(parent, view, position)
+                when (r.kind) {
+                    TAP_SECTION -> return true   // 小节标题：不响应
+                    TAP_FOLDER -> return host.handleHeaderLongPress(r.view, host.sortedGroups().firstOrNull { it.id == r.groupId } ?: return true)
+                    TAP_REAL -> {
+                        p = r.position
+                        val fwdView = r.view ?: view
+                        // 过期子行不能交给微信的长按处理器（它会 findViewById 自己的
+                        // 会话行子控件，拿到 null 直接 NPE）。宁可不弹菜单，也不能闪退。
+                        if (!host.canForwardToWeChat(parent, fwdView, p)) {
+                            host.log("长按未放行: position=$p 不在当前模型内（过期子行）")
+                            return true
+                        }
+                        return orig.onItemLongClick(parent, fwdView, p, id)
+                    }
+                    else -> {
+                        if (!host.canForwardToWeChat(parent, view, position)) return true
+                    }
                 }
             }
         } catch (t: Throwable) {
@@ -284,16 +292,23 @@ internal fun ConversationGroupHook.installItemLongPressInterceptor() {
                             param.result = true
                             return
                         }
-                        correctTapArgs(param)
                         val pos = param.args.getOrNull(1) as? Int ?: return
                         val v = param.args.getOrNull(0) as? View
-                        // 「分组」小节标题：长按同样吃掉，不弹菜单也不传给微信
-                        if (isSectionPosition(parent, pos)) {
-                            param.result = true
+                        val r = resolveTap(parent, v, pos)
+                        if (r.kind == TAP_FOLDER) {
+                            param.result = handleHeaderLongPress(r.view, sortedGroups().firstOrNull { it.id == r.groupId } ?: return)
                             return
                         }
-                        val g = folderGroupOf(v, parent, pos) ?: return
-                        param.result = handleHeaderLongPress(v, g)
+                        if (r.kind == TAP_SECTION) {
+                            param.result = true   // 小节标题：长按同样吃掉
+                            return
+                        }
+                        if (r.kind == TAP_REAL) {
+                            // 用可靠的子 View + 位置修正参数，让微信的长按处理器拿到对的行
+                            param.args[0] = r.view ?: v
+                            param.args[1] = r.position
+                        }
+                        // TAP_UNKNOWN：保持原参数，交给微信原逻辑
                     } catch (t: Throwable) {
                         log("收纳组长按拦截异常: ${t.javaClass.simpleName}: ${t.message}")
                     }
@@ -404,17 +419,15 @@ private fun ConversationGroupHook.animatePageSwitch(entering: Boolean) {
             } else {
                 lv.setSelection(0)                  // 返回主列表回到顶部
             }
-            val dx = lv.width * 0.18f               // 位移取列表宽度的 18%
-            // 新内容从侧面推进来：进入时从右侧进，退出时从左侧退回来，
-            // 配合淡入淡出，视觉上就是一次「页面切换」而不是「列表刷新」。
-            lv.alpha = 0.25f
-            lv.scaleX = 0.985f
-            lv.translationX = if (entering) dx else -dx
+            // ⚠️ 不要用 translationX / scaleX 做切换动画：这两个变换只改「视觉绘制位置」，
+            // 不改 View 的 layout 边界，而 ListView 的命中检测（pointToPosition / getPositionForView）
+            // 用的是 layout 边界。视觉位移而命中区不动 → 刚进二级页面时点的位置会和肉眼看到
+            // 的错开一行，第一个成员经常被误判成标题（组行）被当返回键吃掉，表现就是「要点好几次才进去」。
+            // 只保留极轻的淡入（alpha 不影响命中位置），或直接不动画。
+            lv.alpha = 0.6f
             lv.animate()
                 .alpha(1f)
-                .scaleX(1f)
-                .translationX(0f)
-                .setDuration(220L)
+                .setDuration(160L)
                 .setInterpolator(android.view.animation.DecelerateInterpolator())
                 .start()
         } catch (t: Throwable) {

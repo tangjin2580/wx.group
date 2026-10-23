@@ -656,16 +656,35 @@ internal fun ConversationGroupHook.onLegacyGetView(param: MethodHookParam) {
             param.args[0] = rp
             val v = invokeOriginal(param) as? View
             if (v != null && v.tag !is FolderHolder) {
+                if (DIAG_LOG && memberRenderDiagLogged < 20) {
+                    memberRenderDiagLogged++
+                    log("二级页面成员渲染: pos=$pos rp=$rp tag=${v.tag?.javaClass?.name ?: "null"} openGroupId=$openGroupId")
+                }
                 param.result = v
+                return
+            }
+            // ⚠️ 污染信号：真实成员行经微信 getView 后返回的视图带着 FolderHolder tag，
+            // 说明微信把这个位置复用了我们之前建的收纳组行（type=orig 与真实行 type 撞车，
+            // 或 ListView 跨 type 复用了 scrap）。此时必须强制让微信重建，否则这一行
+            // 看起来像收纳组行 → 点击被当「组标题」吃掉（二级页面第一个成员点不开的根因候选）。
+            if (memberContamLogged < 20) {
+                memberContamLogged++
+                log("成员行被污染: pos=$pos rp=$rp 返回视图 tag=FolderHolder！（openGroupId=$openGroupId，丢弃重来）")
+            }
+            // 强制用全新 convertView 再调一次，逼微信建真正会话行
+            param.args[1] = null
+            val v2 = runCatching { invokeOriginal(param) as? View }.getOrNull()
+            if (v2 != null && v2.tag !is FolderHolder) {
+                param.result = v2
                 return
             }
         }
         // ⚠️ 兜底：模型与 q.d 在「微信清空/重建列表」的间隙里会对不上。
         // 这时绝不能把越界下标交回原始 getView —— 它直接索引 q.d，
         // 越界会抛异常，ListView 拿到 null 子 View 后 NPE，表现就是「点一下就闪退」。
-        if (legacyGuardLogged < 8) {
+        if (legacyGuardLogged < 12) {
             legacyGuardLogged++
-            log("getView 兜底: pos=$pos, 模型行数=${model?.entries?.size ?: -1}, q.d=${rows?.size ?: -1}")
+            log("getView 兜底: pos=$pos, 模型行数=${model?.entries?.size ?: -1}, q.d=${rows?.size ?: -1}, rp=$rp, openGroupId=$openGroupId")
         }
         param.result = fallbackRow(param)
     } catch (t: Throwable) {

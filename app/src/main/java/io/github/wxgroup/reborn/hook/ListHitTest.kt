@@ -4,6 +4,80 @@ import android.view.View
 import io.github.wxgroup.reborn.core.WxGroup
 import io.github.wxgroup.reborn.xp.XposedHelpers
 
+/** 点击解析结果类型 */
+internal const val TAP_UNKNOWN = 0
+internal const val TAP_FOLDER = 1
+internal const val TAP_SECTION = 2
+internal const val TAP_REAL = 3
+
+internal data class TapResolution(
+    val kind: Int,
+    val groupId: String? = null,
+    val view: View? = null,
+    val position: Int = -1   // 纠正后的 ListView 位置（仅 TAP_REAL 有意义）
+)
+
+/** 取 ListView 在某个绝对位置上的子 View（含 header 偏移）；拿不到返回 null */
+internal fun ConversationGroupHook.viewAt(lv: android.widget.ListView, pos: Int): View? {
+    val c = pos - lv.firstVisiblePosition
+    return if (c in 0 until lv.childCount) lv.getChildAt(c) else null
+}
+
+/**
+ * 统一判定「这次点击/长按落在哪一行、是什么类型」。
+ *
+ * ⚠️ 这是修复「分组行点不动 / 二级页面第一个成员点不动」的核心。
+ *
+ * 微信 8.0.x 的会话列表在派发点击时给的 position 和 view 与被点的真实子 View 对不上
+ * （实测差若干行，见 folderGroupOf 注释）。旧逻辑靠 view.tag 判断分组行，但 **view 本身就
+ * 是错位的子 View** —— 点分组行时框架传进来的是真实会话行(kp5.s tag)，于是被当真实会话
+ * 转发给微信、分组永远打不开；点二级页面第一个成员时框架传进来的是标题栏(FolderHolder)，
+ * 于是被当成分组行把刚打开的分组又折叠回去（"要点好几次才进去"）。
+ *
+ * 这里**优先用按下探测 downPos**（ACTION_DOWN 时以屏幕坐标反算，绝对可靠，不受框架错位影响），
+ * 直接去虚拟模型里查这一行到底是什么类型，并据此用「正确的子 View + 正确的位置」转发。
+ * 只有探测不可用时（合成事件等）才退回旧的 tag / position 兜底逻辑。
+ */
+internal fun ConversationGroupHook.resolveTap(parent: Any?, fView: View?, fPos: Int): TapResolution {
+    val lv = parent as? android.widget.ListView
+    // 1) 优先：按下探测（屏幕坐标，绝对可靠，对抗"position 与 view 对不上"）
+    if (lv != null && probeFresh()) {
+        val idx = downPos - headerCount(lv)
+        val e = legacyModel?.entries?.getOrNull(idx)
+        return when (e?.type) {
+            TYPE_HEADER -> {
+                val gid = e.group?.id
+                if (gid != null) TapResolution(TAP_FOLDER, gid, viewAt(lv, downPos) ?: fView, downPos)
+                else TapResolution(TAP_UNKNOWN, view = fView, position = fPos)
+            }
+            TYPE_SECTION -> TapResolution(TAP_SECTION, view = viewAt(lv, downPos) ?: fView, position = downPos)
+            TYPE_REAL -> TapResolution(TAP_REAL, view = viewAt(lv, downPos) ?: fView, position = downPos)
+            else -> TapResolution(TAP_UNKNOWN, view = fView, position = fPos)
+        }
+    }
+    // 2) 兜底：框架给的 tag / position（探测不可用时）
+    val tag = fView?.tag
+    if (tag is FolderHolder) {
+        val gid = tag.groupId
+        if (gid != null) return TapResolution(TAP_FOLDER, gid, fView, fPos)
+    }
+    if (lv != null) {
+        val idx = fPos - headerCount(lv)
+        val e = legacyModel?.entries?.getOrNull(idx)
+        return when (e?.type) {
+            TYPE_HEADER -> {
+                val gid = e.group?.id
+                if (gid != null) TapResolution(TAP_FOLDER, gid, fView, fPos)
+                else TapResolution(TAP_UNKNOWN, view = fView, position = fPos)
+            }
+            TYPE_SECTION -> TapResolution(TAP_SECTION, view = fView, position = fPos)
+            TYPE_REAL -> TapResolution(TAP_REAL, view = fView, position = fPos)
+            else -> TapResolution(TAP_UNKNOWN, view = fView, position = fPos)
+        }
+    }
+    return TapResolution(TAP_UNKNOWN, view = fView, position = fPos)
+}
+
 /**
  * 列表命中判定 —— 回答两个问题：
  *   1. 这个 ListView / 适配器是不是我们的会话列表？
@@ -59,6 +133,7 @@ internal fun ConversationGroupHook.folderGroupOf(view: View?, parent: Any?, posi
     val tag = view?.tag
     if (tag is FolderHolder) {
         val gid = tag.groupId ?: return null
+        if (DIAG_LOG) log("folderGroupOf: 命中 FolderHolder tag → 组行 gid=$gid (openGroupId=$openGroupId)")
         return sortedGroups().firstOrNull { it.id == gid }
     }
     // tag 是微信自己的行持有者（jo5.s）→ 铁定是真实会话行，直接放行
@@ -70,10 +145,19 @@ internal fun ConversationGroupHook.folderGroupOf(view: View?, parent: Any?, posi
     // 只有在 View 压根没有 tag 时，才退回到「按下探测」/位置判断
     if (probeFresh()) {
         val gid = downGroupId ?: return null
+        if (DIAG_LOG) log("folderGroupOf: tag=null 但探测命中组行 downGroupId=$gid（openGroupId=$openGroupId）")
         return sortedGroups().firstOrNull { it.id == gid }
     }
-    if (position < 0) return null
-    val e = legacyModel?.entries?.getOrNull(position - headerCount(parent)) ?: return null
+    if (position < 0) {
+        if (DIAG_LOG) log("folderGroupOf: tag=null 且 position<0 → 放行(null)")
+        return null
+    }
+    val idx = position - headerCount(parent)
+    val e = legacyModel?.entries?.getOrNull(idx) ?: run {
+        if (DIAG_LOG) log("folderGroupOf: tag=null, idx=$idx 越界 model=${legacyModel?.entries?.size} → 放行(null)")
+        return null
+    }
+    if (DIAG_LOG) log("folderGroupOf: tag=null 回退 position=$position idx=$idx entry=${if (e.type == TYPE_HEADER) "H(${e.group?.id})" else "R(real=${e.realPos})"} openGroupId=$openGroupId")
     return if (e.type == TYPE_HEADER && e.group != null) e.group else null
 }
 
@@ -129,7 +213,10 @@ internal fun ConversationGroupHook.canForwardToWeChat(parent: Any?, view: View?,
     if (view == null) return false
     val tag = view.tag
     // 收纳组行永远不交给微信
-    if (tag is FolderHolder) return false
+    if (tag is FolderHolder) {
+        if (DIAG_LOG) log("canForward: 拒绝(FolderHolder) pos=$position openGroupId=$openGroupId")
+        return false
+    }
 
     val lv = parent as? android.widget.ListView ?: return true
     val hv = headerCount(lv)
@@ -137,20 +224,36 @@ internal fun ConversationGroupHook.canForwardToWeChat(parent: Any?, view: View?,
     // ListView 自己的 header / footer（位置在虚拟条目之外）：微信自己认账，放行
     if (position < hv) return true
     // 超出当前适配器范围 = 模型刚缩小、这一行已经不存在了
-    if (position >= lv.count) return false
+    if (position >= lv.count) {
+        if (DIAG_LOG) log("canForward: 拒绝(越界) pos=$position >= lv.count=${lv.count} hv=$hv openGroupId=$openGroupId")
+        return false
+    }
 
     // View 必须真的是 ListView 当前的子 View（旧布局残留的子 View 已被 detach）
-    if (lv.indexOfChild(view) < 0) return false
+    if (lv.indexOfChild(view) < 0) {
+        if (DIAG_LOG) log("canForward: 拒绝(非子View) pos=$position indexOfChild=-1 openGroupId=$openGroupId")
+        return false
+    }
 
     val idx = position - hv
-    val e = legacyModel?.entries?.getOrNull(idx) ?: return false
-    if (e.type != TYPE_REAL || e.realPos < 0) return false
+    val e = legacyModel?.entries?.getOrNull(idx) ?: run {
+        if (DIAG_LOG) log("canForward: 拒绝(无entry) idx=$idx model=${legacyModel?.entries?.size} openGroupId=$openGroupId")
+        return false
+    }
+    if (e.type != TYPE_REAL || e.realPos < 0) {
+        if (DIAG_LOG) log("canForward: 拒绝(非REAL) idx=$idx type=${e.type} realPos=${e.realPos} openGroupId=$openGroupId")
+        return false
+    }
 
     // 真实会话行的 tag 是微信自己的行持有者；如果这一轮已经见过持有者类型，
     // tag 为 null 或类型不符就说明是过期 / 异型行，交回去必崩。
     val expect = hostRowTagClass
-    if (expect != null && !expect.isInstance(tag)) return false
+    if (expect != null && !expect.isInstance(tag)) {
+        if (DIAG_LOG) log("canForward: 拒绝(tag不符) pos=$position expect=${expect.simpleName} actualTag=${tag?.javaClass?.name} openGroupId=$openGroupId")
+        return false
+    }
 
+    if (DIAG_LOG) log("canForward: 放行 pos=$position idx=$idx realPos=${e.realPos} tag=${tag?.javaClass?.simpleName} openGroupId=$openGroupId")
     return true
 }
 
@@ -159,7 +262,7 @@ internal fun ConversationGroupHook.canForwardToWeChat(parent: Any?, view: View?,
  * 所以前若干次打全量，之后打静默。
  */
 internal fun ConversationGroupHook.logItemDispatch(view: View?, parent: Any?, pos: Int, what: String) {
-    if (itemDispatchLogged >= 25) return
+    if (itemDispatchLogged >= 80) return
     itemDispatchLogged++
     val tag = when (val t = view?.tag) {
         null -> "null"

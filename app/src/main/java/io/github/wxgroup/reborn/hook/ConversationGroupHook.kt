@@ -201,6 +201,10 @@ class ConversationGroupHook {
     internal var legacyGuardLogged = 0
     /** 「错误类型的 convertView 被丢弃」日志计数 */
     internal var convertDropLogged = 0
+    /** 二级页面成员行正常渲染计数（诊断用） */
+    internal var memberRenderDiagLogged = 0
+    /** 二级页面成员行被污染（返回 FolderHolder tag）计数（诊断用） */
+    internal var memberContamLogged = 0
 
     /** 收纳组行点击去重（两个拦截入口，300ms 内同一分组只处理一次） */
     internal var lastTapGid: String? = null
