@@ -122,9 +122,9 @@ jobs:
           RC=${PIPESTATUS[0]}
           if [ $RC -ne 0 ]; then
             # job logs API 匿名拉不到、commit comment 需要写权限 —— 用 ::error:: 行
-            # 变成 check-run annotations（公开可读），把日志尾部带出来
-            tail -40 /tmp/build.log | head -c 3800 | while IFS= read -r line; do
-              echo "::error::$line"
+            # 变成 check-run annotations（公开可读）。逐行发，避免单条 4096 字符截断。
+            tail -30 /tmp/build.log | while IFS= read -r line; do
+              echo "::error::${line:0:900}"
             done
           fi
           exit $RC
