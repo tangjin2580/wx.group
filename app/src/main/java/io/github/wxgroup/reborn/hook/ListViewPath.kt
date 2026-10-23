@@ -371,6 +371,51 @@ internal fun ConversationGroupHook.unreadOf(k4: Any?): Int {
     return 0
 }
 
+// ==================================================================================
+// 置顶判定（决定「置顶会话要不要被收进收纳组」）
+// ==================================================================================
+
+/**
+ * 置顶位 = `field_flag` 的第 62 位（0x4000_0000_0000_0000）。
+ *
+ * 怎么定下来的（3200 渠道包 / 微信 8.0.79 对照实验，全表 256 条会话）：
+ *   Dr.li 置顶中   → field_flag = 0x400001A169B9FC1F（最高位 4 = bit62 置位），排列表第 0 位
+ *   Dr.li 取消置顶 → field_flag = 0x000001A169BE7560（bit62 清零），掉到第 8 位
+ * 两次采样之间**只有这一条**翻转了 bit62，且它同时从第 0 位掉到第 8 位 —— 对应上了
+ * 用户「取消置顶 Dr.li」那一步操作。
+ *
+ * ⚠️ 早先拿 `field_flag & 0x10000000` 判置顶是错的：实测 256 条里命中 122 条
+ * （这一位在本版本另有含义），大量普通会话被误判成置顶 → 该收拢的没收拢，
+ * 表现就是「置顶某个对话后它反而消失了 / 取消置顶后群聊才冒出来」。
+ *
+ * ⚠️ `field_flag` 声明在**父类**（im/y0，类型 long J），必须沿继承链找，
+ * 且是 64 位 —— 置顶位是第 62 位，用 int 读不到。
+ */
+private const val PINNED_FLAG_BIT = 0x4000000000000000L
+
+/** k4 类 → 该类的 field_flag 字段（沿继承链解析一次；找不到也缓存 null，避免每行都扫） */
+private val pinnedFieldCache = java.util.Collections.synchronizedMap(HashMap<Class<*>, Field?>())
+
+/** 取某个会话对象上的 field_flag；没有该字段返回 null */
+private fun pinnedFieldOf(cls: Class<*>): Field? {
+    if (pinnedFieldCache.containsKey(cls)) return pinnedFieldCache[cls]
+    val hit = XposedHelpers.fieldOf(cls, "field_flag")?.also { it.isAccessible = true }
+    pinnedFieldCache[cls] = hit
+    return hit
+}
+
+/** 该会话是否被微信置顶（置顶会话不收进收纳组，与微信原生「置顶常驻」行为一致） */
+internal fun ConversationGroupHook.pinnedOf(k4: Any?): Boolean {
+    if (k4 == null) return false
+    val f = pinnedFieldOf(k4.javaClass) ?: return false
+    val v = try {
+        f.get(k4) as? Long
+    } catch (_: Throwable) {
+        null
+    } ?: return false
+    return v and PINNED_FLAG_BIT != 0L
+}
+
 /** 首个字段与其它候选值不一致时打一条日志（最多 8 条），用于跨版本核对哪个字段才是真值 */
 private fun ConversationGroupHook.logUnreadDiff(fields: List<Field>, chosen: Field, value: Int, k4: Any) {
     if (unreadDiffLogged >= 8) return
@@ -531,12 +576,18 @@ internal fun ConversationGroupHook.buildLegacyModel(a: Any, realCount: Int, grou
     val rows = legacyRows(a)
     val names = arrayOfNulls<String>(realCount)
     val posOf = HashMap<String, Int>(realCount * 2)
+    // 置顶会话（微信原生行为：置顶的会话常驻列表顶部，不该被收进收纳组）
+    val pinned = HashSet<String>()
     for (i in 0 until realCount) {
         val row = rows?.getOrNull(i) ?: continue
         val k4 = k4Of(row) ?: continue
         val u = talkerOf(k4) ?: continue
         names[i] = u
         if (!posOf.containsKey(u)) posOf[u] = i
+        if (pinnedOf(k4) && pinned.add(u) && pinnedLogged < 12) {
+            pinnedLogged++
+            log("置顶会话保留在主列表(不被收纳): $u")
+        }
     }
     // username -> 归属分组（第一个命中的分组胜出，避免重复收纳）
     val owner = HashMap<String, String>()
@@ -588,10 +639,11 @@ internal fun ConversationGroupHook.buildLegacyModel(a: Any, realCount: Int, grou
         entries.add(VEntry(TYPE_HEADER, g, -1, memberPos.size))
         hidden += memberPos.size
     }
-    // 其余会话保持原顺序；属于任何分组的会话都已「收拢」（从原位隐藏）
+    // 其余会话保持原顺序；属于任何分组的会话都已「收拢」（从原位隐藏）。
+    // 例外：微信里被置顶的会话仍留在主列表 —— 否则用户长按置顶后会发现「这个对话消失了」。
     for (i in 0 until realCount) {
         val u = names[i]
-        if (u != null && owner.containsKey(u)) continue
+        if (u != null && owner.containsKey(u) && u !in pinned) continue
         entries.add(VEntry(TYPE_REAL, null, i))
     }
     return LegacyModel(entries, hidden)

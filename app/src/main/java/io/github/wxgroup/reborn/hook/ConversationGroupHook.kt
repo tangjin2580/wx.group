@@ -168,6 +168,8 @@ class ConversationGroupHook {
     internal var unreadSnapshotAt = 0L
     internal var unreadSnapshotRows = -1
     internal var unreadDiffLogged = 0
+    /** 「置顶会话保留在主列表」日志的条数上限（每次建模型都会算一遍，不限制会刷屏） */
+    internal var pinnedLogged = 0
 
     /** 列表不可见时的连续空转次数（用于退避停轮询，省电） */
     internal var pollIdle = 0

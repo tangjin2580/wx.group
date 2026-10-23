@@ -419,15 +419,22 @@ private fun ConversationGroupHook.animatePageSwitch(entering: Boolean) {
             } else {
                 lv.setSelection(0)                  // 返回主列表回到顶部
             }
-            // ⚠️ 不要用 translationX / scaleX 做切换动画：这两个变换只改「视觉绘制位置」，
-            // 不改 View 的 layout 边界，而 ListView 的命中检测（pointToPosition / getPositionForView）
-            // 用的是 layout 边界。视觉位移而命中区不动 → 刚进二级页面时点的位置会和肉眼看到
-            // 的错开一行，第一个成员经常被误判成标题（组行）被当返回键吃掉，表现就是「要点好几次才进去」。
-            // 只保留极轻的淡入（alpha 不影响命中位置），或直接不动画。
+            // 新内容从侧面推进来：进入时从右侧进，退出时从左侧退回，配合淡入淡出，
+            // 视觉上就是一次「页面切换」而不是「列表刷新」。
+            //
+            // ⚠️ 关于 translationX 的风险（早先因此把动画整个去掉过）：
+            // 位移只改「视觉绘制位置」、不改 layout 边界，而 ListView 命中检测用的是
+            // layout 边界，动画期间二者会短暂错开。但位移只在动画的 220ms 内存在，
+            // 结束即归 0，常态命中不受影响 —— 真正导致「第一个成员点不动」的是
+            // position 错位，已由 resolveTap（按 ACTION_DOWN 屏幕坐标判定）修掉，
+            // 不需要靠牺牲动画来规避。
+            val dx = lv.width * 0.18f
             lv.alpha = 0.6f
+            lv.translationX = if (entering) dx else -dx
             lv.animate()
                 .alpha(1f)
-                .setDuration(160L)
+                .translationX(0f)
+                .setDuration(220L)
                 .setInterpolator(android.view.animation.DecelerateInterpolator())
                 .start()
         } catch (t: Throwable) {

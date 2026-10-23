@@ -19,11 +19,15 @@ import io.github.wxgroup.reborn.xp.XposedHelpers
  *
  * ── 实例怎么拿 ─────────────────────────────────────────────────────
  * l4 没有静态单例，只能从微信的 DI 容器取：
- *     gp0.j1.v(tn3.c4)  →  PluginMessengerFoundation 实现（h2）
- *     h2.ej()           →  ConversationStorage（l4）
- * 这两个混淆名是 8.0.78 / 8.0.79 的实际值。换版本若失效，用下面的方法重新确认：
- *   · 在 tinker dex 里找 const-string "MicroMsg.ConversationStorage"
- *   · 找调用 `b0(Ljava/lang/String;)Z` 的菜单处理类（conversation/q3 一类）
+ *     3200 渠道包（8.0.79，本次实测）：pp0.i1.v(po3.c4) → h2 → Bj() → l4
+ *     稳定包 / 补丁包（8.0.78/79）：  gp0.j1.v(tn3.c4) → h2 → ej() → l4
+ *     base.apk 包名：                pq0.i1.v(mp3.c4) → h2 → Bj() → l4
+ * 混淆名每个版本都重排，所以三个候选全试一遍（见 [DI_RESOLVERS] / [FOUNDATION_SERVICES]）。
+ * 换版本若全部失效，按下面的办法重新确认（本次 3200 就是这么查出来的）：
+ *   · tinker dex 里找 const-string "MicroMsg.ConversationStorage" → 存储类（l4）
+ *   · 找「无参且返回 l4」的方法                                  → holder（...foundation.h2）
+ *   · 找 h2 实现的接口                                            → DI 服务类（po3.c4）
+ *   · 找 `static v(Ljava/lang/Class;)`                            → DI 定位器（pp0.i1）
  * 失败时只打一条日志并静默降级（不影响列表其它功能）。
  */
 
@@ -39,11 +43,18 @@ private const val MARK_READ_METHOD = "b0"
  *      tinker   :  gp0.j1.v(tn3.c4)  →  h2.ej()
  * 所以不能只写一套，按候选逐个试。存储类本身和已读方法名（l4 / b0）两边一致。
  */
-private val DI_RESOLVERS = listOf("pq0.i1", "gp0.j1")
-private val FOUNDATION_SERVICES = listOf("mp3.c4", "tn3.c4")
+private val DI_RESOLVERS = listOf("pp0.i1", "pq0.i1", "gp0.j1")
+private val FOUNDATION_SERVICES = listOf("po3.c4", "mp3.c4", "tn3.c4")
 
-/** 缓存解析结果（失败也缓存，避免每次点击都重试一整轮反射） */
-private var storageResolveFailed = false
+/**
+ * 解析失败的时间戳；0 = 还没失败过。
+ *
+ * 早期版本是「失败即永久放弃」，但如果第一次点击发生在微信还没把相关类加载完时
+ * （冷启动刚进会话页就点「已读」），一次失败会把整个进程生命周期的已读功能都废掉。
+ * 这里改成失败后冷却 [RESOLVE_RETRY_MS] 再重试，既是限流也保留了自愈机会。
+ */
+private var storageResolveFailedAt = 0L
+private const val RESOLVE_RETRY_MS = 30_000L
 
 /**
  * 取微信 ConversationStorage 实例；拿不到返回 null。
@@ -54,7 +65,9 @@ private var storageResolveFailed = false
  */
 internal fun ConversationGroupHook.conversationStorage(): Any? {
     storageRef?.let { return it }
-    if (storageResolveFailed) return null
+    if (storageResolveFailedAt != 0L &&
+        System.currentTimeMillis() - storageResolveFailedAt < RESOLVE_RETRY_MS
+    ) return null
     val loader = hookedLoader ?: return null
 
     var holder: Any? = null
@@ -94,10 +107,11 @@ internal fun ConversationGroupHook.conversationStorage(): Any? {
         }
     }
     if (st == null) {
-        storageResolveFailed = true
-        log("ConversationStorage 解析失败：本次运行不再尝试，「已读」按钮将只提示不可用")
+        storageResolveFailedAt = System.currentTimeMillis()
+        log("ConversationStorage 解析失败（已试 ${DI_RESOLVERS.size}×${FOUNDATION_SERVICES.size} 组合）：「已读」暂不可用，${RESOLVE_RETRY_MS / 1000}s 后重试")
         return null
     }
+    storageResolveFailedAt = 0L
     storageRef = st
     log("ConversationStorage 已就绪: ${st.javaClass.name}")
     return st
