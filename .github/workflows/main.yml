@@ -113,7 +113,24 @@ jobs:
           fi
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug
+        # 失败时把日志尾部贴到 commit comment（job logs API 匿名拉不到，便于远程排查）
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          ./gradlew assembleDebug 2>&1 | tee /tmp/build.log
+          RC=${PIPESTATUS[0]}
+          if [ $RC -ne 0 ]; then
+            tail -c 6000 /tmp/build.log | jq -Rs '{body: .}' > /tmp/payload.json
+            curl -sS -X POST \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
+              --data @/tmp/payload.json | head -c 300
+            echo "::error::assembleDebug failed; log tail posted to commit comment"
+          fi
+          exit $RC
 
       - name: Build Release APK (signed if key present)
         run: ./gradlew assembleRelease
