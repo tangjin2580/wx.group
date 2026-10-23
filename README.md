@@ -63,6 +63,19 @@
 
 > ⚠️ 内置签名库必须放在 **assets** 而不是 res/raw：AGP 对 release 包默认做资源路径优化（aapt2 optimize 重命名资源路径），按 `res/raw/...` 原路径读会拿到空（debug 包无此优化，容易漏测）。assets 路径恒定，微信进程里的模块 ClassLoader 与 App 进程都能稳定读到。
 
+### 镜像自动发布（CI）
+
+App 里那个「私有 WebDAV 镜像」不再是手工传的 —— 只要往仓库改了 `app/src/main/assets/wechat_signatures.json` 并推到 `main`（或打 tag、手动触发 workflow），`.github/workflows/main.yml` 的 `publish-signature` job 就会把它 PUT 到 `https://r2pan.us.ci/webdav/wxgroup/wechat_signatures.json`，然后**回读比对 sha256** 确认落盘字节一致。
+
+| 行为 | 说明 |
+| --- | --- |
+| 触发条件 | `push`（main / tag）、`workflow_dispatch`；PR 跳过 |
+| 凭据 | Secrets `R2PAN_WEBDAV_USER` / `R2PAN_WEBDAV_PASS`，未配置时回落到内置账号 |
+| 失败策略 | 重试 3 次；仍失败只打 `::warning::` 并在 Job Summary 记录，**不阻塞发版**（APK 内已内置签名，App 还有 jsDelivr / GitHub raw 兜底） |
+| 结果查看 | Actions run 的 Job Summary 会列出微信版本、revision、方法数、sha256、回读校验结果 |
+
+所以给新微信版本做适配的标准流程变成：改 JSON（`revision` +1）→ 推 main → CI 自动刷镜像 → 用户手机上点「在线获取最新」即可，**不用等 APK 发版**（真正想固化进安装包时再打 tag）。
+
 ### 微信 8.0.79 关键混淆名对照（实测）
 
 | 角色 | 8.0.78 | 8.0.79 |
@@ -165,7 +178,13 @@ Xposed Hook 跑在**微信进程**里，分组数据由**模块 App 进程**创�
 
 正式签名：优先读 gitignored 的 `keystore.properties`（storeFile/storePassword/keyAlias/keyPassword），否则回落环境变量 `KEYSTORE_FILE / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD`（CI 经 GitHub Secrets 注入）。都没有时 release 出未签名包，构建不失败。
 
-**CI**：推 `v*` tag → GitHub Actions 解码 keystore → 构建签名 release → 自动发 GitHub Release。
+**CI**（`.github/workflows/main.yml`，三个 job）：
+
+| job | 触发 | 做什么 |
+| --- | --- | --- |
+| `build` | 所有 push / PR | 装 SDK 35 → 解码 keystore → 出 debug + release APK（失败时把诊断日志写成 commit comment，省得翻 5 分钟的网页日志） |
+| `release` | 推 `v*` tag | 取签名包（没有就退回 debug 包）→ 发 GitHub Release |
+| `publish-signature` | 非 PR 的一切触发 | 把 `assets/wechat_signatures.json` 推到 r2pan WebDAV 镜像并回读校验 sha256 |
 
 ---
 

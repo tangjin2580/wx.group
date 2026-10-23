@@ -171,3 +171,92 @@ jobs:
             1. 下载 APK 安装
             2. 在 LSPosed 中激活模块，勾选作用域「微信」
             3. 强停微信后重新打开生效
+
+  publish-signature:
+    # 把仓库里的微信签名库同步到自建 WebDAV 镜像（r2pan）。
+    # App 内「在线获取最新签名」的第一优先级源就是这个地址，好处是用户换微信版本后
+    # 不用等新 APK 发版就能拉到新签名 —— 只要往仓库里改 JSON，CI 自动推上去。
+    #
+    # 凭据优先级：Secrets（R2PAN_WEBDAV_USER / R2PAN_WEBDAV_PASS）→ 内置账号。
+    # 内置账号本来就以明文写在 SignatureActivity.kt 里（APK 可反编译），所以这里回落不算新增泄露；
+    # 想换专用账号只改 Secrets 即可，无需改代码。
+    #
+    # 只跳过 PR：main 推送 / tag / 手动触发都发布。
+    # 上传失败不阻塞发版（APK 内仍内置签名，App 还有 jsDelivr、GitHub raw 两级回退），
+    # 但会在 run 里留 warning 注解，方便回看。
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Upload signature to WebDAV mirror
+        env:
+          R2PAN_WEBDAV_USER: ${{ secrets.R2PAN_WEBDAV_USER }}
+          R2PAN_WEBDAV_PASS: ${{ secrets.R2PAN_WEBDAV_PASS }}
+        run: |
+          set -uo pipefail
+
+          SRC="app/src/main/assets/wechat_signatures.json"
+          BASE="https://r2pan.us.ci/webdav"
+          DIR="$BASE/wxgroup"
+          URL="$DIR/wechat_signatures.json"
+          USER="${R2PAN_WEBDAV_USER:-webdav}"
+          PASS="${R2PAN_WEBDAV_PASS:-lixin2324}"
+
+          WXVER=$(jq -r '.wechatVersion // "?"' "$SRC")
+          REV=$(jq -r '.revision // "?"' "$SRC")
+          CNT=$(jq -r '.methods | length' "$SRC")
+          SRC_SHA=$(sha256sum "$SRC" | awk '{print $1}')
+          echo "本地签名库: wechatVersion=$WXVER revision=$REV methods=$CNT sha256=$SRC_SHA"
+
+          # 目标目录不存在时建一下；已存在返回 405，忽略即可
+          mc=$(curl -sS -o /dev/null -w '%{http_code}' -u "$USER:$PASS" -X MKCOL "$DIR") || mc=000
+          echo "MKCOL $DIR -> $mc"
+
+          ok=0
+          code=000
+          for i in 1 2 3; do
+            code=$(curl -sS -o /tmp/put.out -w '%{http_code}' -u "$USER:$PASS" \
+              -H 'Content-Type: application/json' \
+              --upload-file "$SRC" "$URL") || code=000
+            echo "PUT attempt $i -> $code"
+            if [ "$code" = "200" ] || [ "$code" = "201" ] || [ "$code" = "204" ]; then ok=1; break; fi
+            [ -s /tmp/put.out ] && head -c 300 /tmp/put.out && echo
+            sleep 3
+          done
+
+          if [ "$ok" != "1" ]; then
+            {
+              echo "### ⚠️ 签名镜像上传失败"
+              echo ""
+              echo "- HTTP: \`$code\`"
+              echo "- 影响：仅「在线获取最新签名」的首选源可能仍是旧版本；APK 内已内置 \`$WXVER\`，App 还有 jsDelivr / GitHub raw 回退。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::r2pan 上传失败（HTTP $code），已在总结里记录；不影响 APK 发版"
+            exit 0
+          fi
+
+          # 回读校验，确保镜像与仓库字节一致
+          curl -sS -u "$USER:$PASS" "$URL" -o /tmp/dl.json || true
+          DL_SHA=$(sha256sum /tmp/dl.json 2>/dev/null | awk '{print $1}')
+          if [ "$DL_SHA" = "$SRC_SHA" ]; then
+            VERDICT="✅ 回读校验通过，字节一致"
+          else
+            VERDICT="⚠️ 回读哈希不一致（远端可能被 CDN/缓存拦截）"
+            echo "::warning::回读哈希不一致 src=$SRC_SHA dl=$DL_SHA"
+          fi
+
+          {
+            echo "### 微信签名已同步到 r2pan"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| 微信版本 | \`$WXVER\` |"
+            echo "| revision | \`$REV\` |"
+            echo "| 方法数 | \`$CNT\` |"
+            echo "| sha256 | \`$SRC_SHA\` |"
+            echo "| 地址 | $URL |"
+            echo "| 校验 | $VERDICT |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::签名镜像已更新 $URL ($WXVER rev$REV)"
