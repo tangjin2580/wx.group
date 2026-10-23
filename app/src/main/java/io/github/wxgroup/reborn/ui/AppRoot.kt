@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.wxgroup.reborn.core.Updater
 import io.github.wxgroup.reborn.ui.GroupManageActivity
+import io.github.wxgroup.reborn.ui.LogActivity
 import io.github.wxgroup.reborn.ui.SignatureActivity
 import io.github.wxgroup.reborn.ui.SortGroupsActivity
 import io.github.wxgroup.reborn.ui.ThemeActivity
@@ -84,6 +85,7 @@ fun AppRoot(vm: AppViewModel) {
         val openGroups: () -> Unit = { context.startActivitySafe<GroupManageActivity>() }
         val openTheme: () -> Unit = { context.startActivitySafe<ThemeActivity>() }
         val openSignature: () -> Unit = { context.startActivitySafe<SignatureActivity>() }
+        val openLog: () -> Unit = { context.startActivitySafe<LogActivity>() }
         val openSort: () -> Unit = { context.startActivitySafe<SortGroupsActivity>() }
         // 检查更新：手动触发，无论结果都给反馈
         val checkUpdate: () -> Unit = {
@@ -188,6 +190,7 @@ fun AppRoot(vm: AppViewModel) {
                             contentPadding = padding,
                             onTheme = openTheme,
                             onSignature = openSignature,
+                            onLog = openLog,
                             onBadgeDot = vm::setBadgeDot,
                             onHideEmpty = vm::setHideEmptyGroups,
                             onCompact = vm::setCompactRows,

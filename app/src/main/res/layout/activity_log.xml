@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 运行日志：微信进程 Hook 日志的查看页（数据来自 /data/local/tmp 日志镜像，见 RunLog） -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/wg_page_bg"
+    android:orientation="vertical">
+
+    <!-- 状态行：镜像是否就绪 / 条数 / 落盘时间 -->
+    <TextView
+        android:id="@+id/tv_log_status"
+        style="@style/WgRowSub"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="14dp"
+        android:paddingBottom="6dp"
+        android:textSize="12sp" />
+
+    <!-- 工具行：刷新 / 复制 / 清空 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingStart="@dimen/wg_content_side"
+        android:paddingEnd="@dimen/wg_content_side"
+        android:paddingTop="4dp">
+
+        <Button
+            android:id="@+id/btn_log_refresh"
+            style="@style/WgButton.Outlined"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:text="@string/log_refresh" />
+
+        <Button
+            android:id="@+id/btn_log_copy"
+            style="@style/WgButton.Outlined"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:text="@string/log_copy" />
+
+        <Button
+            android:id="@+id/btn_log_clear"
+            style="@style/WgButton.Outlined"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/log_clear" />
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingStart="@dimen/wg_content_side"
+        android:paddingEnd="@dimen/wg_content_side"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp">
+
+        <TextView
+            android:id="@+id/tv_log"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_wg_card"
+            android:fontFamily="monospace"
+            android:includeFontPadding="false"
+            android:padding="14dp"
+            android:textColor="@color/wg_text_primary"
+            android:textIsSelectable="true"
+            android:textSize="11sp" />
+    </ScrollView>
+</LinearLayout>

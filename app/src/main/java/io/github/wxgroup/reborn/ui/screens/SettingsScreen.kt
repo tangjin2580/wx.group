@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Article
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Palette
@@ -65,6 +66,7 @@ fun SettingsScreen(
     contentPadding: PaddingValues,
     onTheme: () -> Unit,
     onSignature: () -> Unit,
+    onLog: () -> Unit,
     onBadgeDot: (Boolean) -> Unit,
     onHideEmpty: (Boolean) -> Unit,
     onCompact: (Boolean) -> Unit,
@@ -146,6 +148,13 @@ fun SettingsScreen(
                     title = "微信签名配置",
                     subtitle = "按你的微信版本补全 Hook 方法签名",
                     onClick = onSignature
+                )
+                SettingsItem(
+                    icon = Icons.Rounded.Article,
+                    iconTint = IconTeal,
+                    title = "运行日志",
+                    subtitle = "查看微信进程内的 Hook 日志（排查签名失配）",
+                    onClick = onLog
                 )
                 SettingsItem(
                     icon = Icons.Rounded.RestartAlt,

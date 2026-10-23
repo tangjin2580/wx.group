@@ -228,6 +228,12 @@ class ConversationGroupHook {
     internal var correctLogged = 0
     /** 「忽略了非微信运行时类加载器」日志计数 */
     internal var rejectedLoaderLogged = 0
+
+    // ===== ListView 适配器诊断（换微信版本后定位真实适配器类名用） =====
+    /** 已记录过日志的适配器类名（去重，同名只记一次） */
+    internal val adaptersSeen = java.util.Collections.synchronizedSet(HashSet<String>())
+    /** 诊断日志条数上限：防某些界面疯狂换适配器刷屏 */
+    internal const val ADAPTER_SEEN_LOG_LIMIT = 40
     /** 「分组顺序」诊断日志计数 */
     internal var orderLogged = 0
     /** 已挂诊断 hook 的「微信点击消费方」类 */
@@ -402,6 +408,20 @@ class ConversationGroupHook {
      * Class）的方法，等它被调用时拿到运行时类加载器，再用那个加载器去解析、挂载
      * 所有微信自己的类。
      */
+    /**
+     * ListView 适配器诊断：每个适配器类名只记一次（上限 [ADAPTER_SEEN_LOG_LIMIT] 条）。
+     *
+     * 目的：换微信版本后，从 logcat（或模块 App 的「运行日志」页）直接读出会话列表
+     * 真实适配器的类名，省去 jadx 全量反编译。3200 渠道包的 iq5/a1 失联就是
+     * 靠这一行发现的。
+     */
+    internal fun logAdapterSeen(adapter: Any, host: Any?) {
+        val cls = adapter.javaClass.name
+        if (!adaptersSeen.add(cls)) return
+        if (adaptersSeen.size > ADAPTER_SEEN_LOG_LIMIT) return
+        log("引导: AbsListView.setAdapter: $cls @${host?.javaClass?.name} (loader=${adapter.javaClass.classLoader?.javaClass?.simpleName})")
+    }
+
     private fun installBootstrap() {
         try {
             XposedHelpers.findAndHookMethod(
@@ -411,6 +431,10 @@ class ConversationGroupHook {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         val a = param.args.getOrNull(0) ?: return
                         val loader = a.javaClass.classLoader ?: return
+                        // 诊断：把每个出现过的 ListView 适配器类名记一笔（去重限量）。
+                        // 换微信版本后第一件事看这行 —— 3200 渠道包就是从这里发现
+                        // iq5/a1 已经不存在、真实适配器换了类名。
+                        logAdapterSeen(a, param.thisObject)
                         ensureHooked(loader)
                         if (legacyAdapterClass?.isInstance(a) == true) {
                             param.thisObject?.let { legacyListView = WeakReference(it) }

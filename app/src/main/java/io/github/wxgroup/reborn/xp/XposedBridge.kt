@@ -2,6 +2,7 @@ package io.github.wxgroup.reborn.xp
 
 import android.util.Log
 import io.github.libxposed.api.XposedInterface
+import io.github.wxgroup.reborn.core.RunLog
 import java.lang.reflect.Constructor
 import java.lang.reflect.Method
 
@@ -26,18 +27,23 @@ object XposedBridge {
     /** 由模块入口（XposedModule）注入；只应在被 hook 的宿主进程里调用 */
     fun attach(iface: XposedInterface) {
         xposedInterface = iface
+        // 进入 Hook 进程：日志开始进环形缓冲并落盘到 /data/local/tmp 镜像（模块 App 可读）
+        RunLog.enableRemote()
     }
 
     fun log(msg: String) {
         Log.i(TAG, msg)
+        RunLog.record("I", msg)
     }
 
     fun log(t: Throwable) {
         Log.e(TAG, "exception", t)
+        RunLog.record("E", "exception: ${Log.getStackTraceString(t)}")
     }
 
     fun log(msg: String, t: Throwable) {
         Log.e(TAG, msg, t)
+        RunLog.record("E", "$msg: ${Log.getStackTraceString(t)}")
     }
 
     fun hookMethod(member: java.lang.reflect.Member, callback: XC_MethodHook): XC_MethodHook.Unhook {

@@ -591,7 +591,8 @@ object GroupStore {
 
     /** 用 su 预创建镜像文件并设为 666。会阻塞（等待 root 授权），必须在后台线程调用 */
     fun provisionMirrorsWithRoot(): Boolean = try {
-        val cmd = listOf(TMP_GROUPS, TMP_SETTINGS).joinToString(" && ") { "touch $it && chmod 666 $it" }
+        // 运行日志镜像也在这建：Hook 侧落盘、模块 App「运行日志」页读取（见 RunLog）
+        val cmd = listOf(TMP_GROUPS, TMP_SETTINGS, RunLog.TMP_LOG).joinToString(" && ") { "touch $it && chmod 666 $it" }
         val p = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
         p.outputStream.close()
         p.waitFor() == 0

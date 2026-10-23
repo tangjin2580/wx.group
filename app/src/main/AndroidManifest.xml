@@ -56,6 +56,9 @@
         <activity
             android:name=".ui.SignatureActivity"
             android:exported="false" />
+        <activity
+            android:name=".ui.LogActivity"
+            android:exported="false" />
 
         <!-- 跨进程数据桥：让微信能读取本模块在私有存储里的分组/签名 -->
         <provider

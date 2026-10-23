@@ -23,9 +23,10 @@
 2. 打开 **LSPosed Manager → 模块**，勾选启用 **微信分组**，作用域勾选 **微信 (com.tencent.mm)**。
 3. **（一次性，需 root）预创建跨进程镜像文件**——模块 App 进程在 SELinux 下无法在 `/data/local/tmp` 新建文件，只能覆盖已存在的世界可写文件：
    ```bash
-   adb shell su -c 'for f in groups settings; do p=/data/local/tmp/wxgroup_reborn_$f.json; touch $p && chmod 666 $p; done'
+   adb shell su -c 'for f in groups settings log; do p=/data/local/tmp/wxgroup_reborn_$f.json; touch $p && chmod 666 $p; done'
    ```
    > 也可以在模块 App 里看到「模块状态：未激活」时，按提示用 root 创建（旧版设置页内置一键创建入口）。
+   > `log` 这份是「运行日志」页的数据通道（微信进程 Hook 日志 → App 查看），v1.3.1 起需要。
 4. 强停微信后重新打开，会话列表顶部就会出现收纳组。
 
 ### 模块 App（Compose 界面）
