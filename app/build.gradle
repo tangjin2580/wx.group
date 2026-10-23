@@ -20,8 +20,8 @@ android {
         // （CI 里从 tag 推导版本、或本地做灰度包时用得上）
         def vcProp = project.findProperty('versionCodeOverride')
         def vnProp = project.findProperty('versionNameOverride')
-        versionCode vcProp == null ? 13 : (vcProp as Integer)
-        versionName vnProp == null ? '1.3.1' : vnProp.toString()
+        versionCode vcProp == null ? 14 : (vcProp as Integer)
+        versionName vnProp == null ? '1.3.2' : vnProp.toString()
     }
 
     // ── 正式签名（条件启用）──────────────────────────────────────────────
@@ -90,6 +90,10 @@ dependencies {
     // 旧版 de.robv.android.xposed:api:82 已移除 —— 模块入口用 XposedModule（见 MainHook.kt），
     // hook 用 io.github.wxgroup.reborn.xp 下的薄封装（backed by libxposed 102）。
     compileOnly 'io.github.libxposed:api:102.0.0'
+
+    // DexKit（LuckyPray/DexKit）：签名适配器类失联时的反查兜底（见 AdaptiveResolve.kt）。
+    // 自带 libdexkit.so，LSPosed 会把模块 native lib 目录注入宿主进程。
+    implementation 'org.luckypray:dexkit:2.3.0'
 
     implementation 'androidx.appcompat:appcompat:1.6.1'
 

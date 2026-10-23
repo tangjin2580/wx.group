@@ -234,6 +234,20 @@ class ConversationGroupHook {
     internal val adaptersSeen = java.util.Collections.synchronizedSet(HashSet<String>())
     /** 诊断日志条数上限：防某些界面疯狂换适配器刷屏 */
     internal val ADAPTER_SEEN_LOG_LIMIT = 40
+
+    // ===== 自适应解析（AdaptiveResolve.kt 共用状态） =====
+    /** BaseAdapter 继承方法的全局 hook 是否已装（签名路径 / 动态解析幂等共用） */
+    @Volatile
+    internal var baseAdapterHooksInstalled = false
+    /** DexKit 反查出的候选适配器类名（宿主锚点失联时的兜底） */
+    @Volatile
+    internal var dexKitCandidates: Set<String>? = null
+    /** 行列表字段（容器类 → Field，解析一次缓存） */
+    internal var rowsField: Field? = null
+    internal var rowsFieldOwner: Class<*>? = null
+    /** 行 → 会话对象字段（行类 → Field，解析一次缓存） */
+    internal var rowK4Field: Field? = null
+    internal var rowK4FieldOwner: Class<*>? = null
     /** 「分组顺序」诊断日志计数 */
     internal var orderLogged = 0
     /** 已挂诊断 hook 的「微信点击消费方」类 */
@@ -436,6 +450,10 @@ class ConversationGroupHook {
                         // iq5/a1 已经不存在、真实适配器换了类名。
                         logAdapterSeen(a, param.thisObject)
                         ensureHooked(loader)
+                        // 动态解析（3200 渠道包即此路径命中）：签名适配器类失联时，
+                        // 用稳定宿主类名 / DexKit 候选锚定真实适配器，结构校验通过后挂载。
+                        // 放在 isInstance 判定之前 —— 收编成功后本次回调顺势走原有记录逻辑。
+                        maybeAdoptAdapter(param.thisObject, a)
                         if (legacyAdapterClass?.isInstance(a) == true) {
                             param.thisObject?.let { legacyListView = WeakReference(it) }
                             // 记下宿主 Activity：二级页面要靠它拦硬件返回键

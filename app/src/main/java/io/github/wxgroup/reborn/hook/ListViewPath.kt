@@ -34,6 +34,9 @@ internal fun ConversationGroupHook.installListViewPath(loader: ClassLoader, sig:
     val clazz = ReflectionUtil.findClass(loader, className)
     if (clazz == null) {
         log("找不到会话适配器类: $className")
+        // 签名类失联（如 3200 渠道包的 kp5/a1）：启动 DexKit 反查兜底，
+        // 同时宿主锚定（见 AdaptiveResolve.maybeAdoptAdapter）仍是最主力的路径。
+        DexKitResolver.resolveAsync(appContext)
         return
     }
     legacyAdapterClass = clazz
@@ -44,7 +47,17 @@ internal fun ConversationGroupHook.installListViewPath(loader: ClassLoader, sig:
     hookAdapterMethod(clazz, "getView", 3, "ListViewGetView")
     hookAdapterMethod(clazz, "getItem", 1, "ListViewGetItem")
 
-    // 继承自 BaseAdapter 的方法，用实例守卫限流到会话适配器
+    // 继承自 BaseAdapter 的方法，用实例守卫限流到会话适配器（幂等：动态解析路径可能已装）
+    installBaseAdapterHooks()
+}
+
+/**
+ * BaseAdapter 继承方法的 Hook（全局挂 + 实例守卫限流到会话适配器）。
+ * 幂等：签名路径和动态解析（AdaptiveResolve）谁先到谁装，重复调用直接跳过。
+ */
+internal fun ConversationGroupHook.installBaseAdapterHooks() {
+    if (baseAdapterHooksInstalled) return
+    baseAdapterHooksInstalled = true
     val base = android.widget.BaseAdapter::class.java
     val intArg = Int::class.javaPrimitiveType!!
     hookBaseAdapter(base, "getItemViewType", arrayOf(intArg)) { p -> legacyHeaderType(p) }
@@ -149,29 +162,79 @@ internal fun ConversationGroupHook.legacyHeaderType(param: MethodHookParam): Any
 /**
  * 适配器的「行容器」字段：8.0.79 是 `r`，8.0.78 是 `q`。
  * 解析一次后按适配器类记住，之后每次都是 Field.get —— 不再「先试 r、失败再试 q」。
+ * 兜底：名字候选全失联时结构反查 —— 适配器上「其类型里声明了 List 字段」的对象字段
+ * （行容器 iq5/f 的结构是稳定的：内含行 List + SparseArray + HashMap）。
  */
 internal fun ConversationGroupHook.containerOf(adapter: Any): Any? {
     val cls = adapter.javaClass
-    val f: Field? = if (containerFieldOwner === cls) {
-        containerField
-    } else {
-        val found = XposedHelpers.fieldOf(cls, "r") ?: XposedHelpers.fieldOf(cls, "q")
-        containerField = found
-        containerFieldOwner = cls
-        found
+    if (containerFieldOwner === cls) {
+        return containerField?.let { runCatching { it.get(adapter) }.getOrNull() }
     }
-    if (f == null) return null
-    return try {
-        f.get(adapter)
-    } catch (t: Throwable) {
-        null
+    var found: Field? = XposedHelpers.fieldOf(cls, "r") ?: XposedHelpers.fieldOf(cls, "q")
+    if (found == null) {
+        found = cls.declaredFields.firstOrNull { f ->
+            !java.lang.reflect.Modifier.isStatic(f.modifiers) &&
+                !List::class.java.isAssignableFrom(f.type) &&
+                f.type.declaredFields.any { List::class.java.isAssignableFrom(it.type) }
+        }?.also { it.isAccessible = true }
+        if (found != null) log("行容器字段结构反查: ${cls.name}.${found.name} (${found.type.name})")
     }
+    containerField = found
+    containerFieldOwner = cls
+    return found?.let { runCatching { it.get(adapter) }.getOrNull() }
 }
 
-/** 会话列表的原始行列表（8.0.79: adapter.r.d；8.0.78: adapter.q.d） */
+/** 会话列表的原始行列表（8.0.79: adapter.r.d；8.0.78: adapter.q.d）。「d」失联时结构反查容器里的 List 字段。 */
 internal fun ConversationGroupHook.legacyRows(adapter: Any): List<*>? {
     val container = containerOf(adapter) ?: return null
-    return XposedHelpers.getObjectField(container, "d") as? List<*>
+    val cls = container.javaClass
+    val f: Field? = if (rowsFieldOwner === cls) {
+        rowsField
+    } else {
+        var hit: Field? = XposedHelpers.fieldOf(cls, "d")?.takeIf {
+            List::class.java.isAssignableFrom(it.type)
+        }
+        if (hit == null) {
+            var cc: Class<*>? = cls
+            while (cc != null && cc != Any::class.java && hit == null) {
+                hit = cc.declaredFields.firstOrNull {
+                    List::class.java.isAssignableFrom(it.type)
+                }?.also { it.isAccessible = true }
+                cc = cc.superclass
+            }
+            if (hit != null) log("行列表字段结构反查: ${cls.name}.${hit.name}")
+        }
+        rowsField = hit
+        rowsFieldOwner = cls
+        hit
+    }
+    return f?.let { runCatching { it.get(container) as? List<*> }.getOrNull() }
+}
+
+/**
+ * 行 → 会话对象（k4）。8.0.78/79 都是 `row.d`（类型 com.tencent.mm.storage.k4）。
+ * 「d」失联时结构反查：行上类型落在 com.tencent.mm.storage 包里的字段
+ * （storage 包名是稳定的，混淆只动最后一段）。
+ */
+internal fun ConversationGroupHook.k4Of(row: Any): Any? {
+    XposedHelpers.getObjectField(row, "d")?.let { return it }
+    val cls = row.javaClass
+    val f: Field? = if (rowK4FieldOwner === cls) {
+        rowK4Field
+    } else {
+        var hit: Field? = null
+        var cc: Class<*>? = cls
+        while (cc != null && cc != Any::class.java && hit == null) {
+            hit = cc.declaredFields.firstOrNull {
+                it.type.name.startsWith("com.tencent.mm.storage.")
+            }?.also { it.isAccessible = true }
+            cc = cc.superclass
+        }
+        rowK4Field = hit
+        rowK4FieldOwner = cls
+        hit
+    } ?: return null
+    return runCatching { f.get(row) }.getOrNull()
 }
 
 /** talker 方法的候选名（8.0.79 `f1`，8.0.78 `i1`），命中后按类记住，只解析一次 */
@@ -180,21 +243,45 @@ private val TALKER_METHOD_CANDIDATES = arrayOf("f1", "i1")
 /**
  * 从会话对象 k4 上取 talker。
  * 8.0.78 是 k4.i1()（父类 im/j2），8.0.79 父类改成 hn/j2 后变成 f1()。
+ * 兜底：候选名全失联时结构反查 —— 扫 k4 上「无参返回 String 且值长得像 wxid/群号」
+ * 的方法（有真实实例可探，命中即缓存；失败也缓存，避免每次渲染都扫）。
  */
 internal fun ConversationGroupHook.talkerOf(k4: Any?): String? {
     if (k4 == null) return null
     val cls = k4.javaClass
     val known = talkerMethodCache[cls]
-    if (known != null) return XposedHelpers.callMethod(k4, known) as? String
+    if (known != null) {
+        if (known.isEmpty()) return null  // 已知失联，别再试
+        return XposedHelpers.callMethod(k4, known) as? String
+    }
     for (name in TALKER_METHOD_CANDIDATES) {
         val v = XposedHelpers.callMethod(k4, name) as? String
-        if (!v.isNullOrBlank()) {
+        if (!v.isNullOrBlank() && looksLikeUsername(v)) {
             talkerMethodCache[cls] = name
             return v
         }
     }
+    val m = cls.declaredMethods.firstOrNull { md ->
+        md.parameterTypes.isEmpty() && md.returnType == String::class.java &&
+            !java.lang.reflect.Modifier.isStatic(md.modifiers)
+    }?.also { it.isAccessible = true }
+    if (m == null) {
+        talkerMethodCache[cls] = ""
+        return null
+    }
+    val v = runCatching { m.invoke(k4) as? String }.getOrNull()
+    if (!v.isNullOrBlank() && looksLikeUsername(v)) {
+        talkerMethodCache[cls] = m.name
+        log("talker 方法结构反查: ${cls.name}.${m.name}")
+        return v
+    }
+    talkerMethodCache[cls] = ""
     return null
 }
+
+/** wxid_xxx / 手机号 / 123456789@chatroom 这类会话标识的共同特征（区别于昵称/摘要） */
+private fun looksLikeUsername(v: String): Boolean =
+    v.length >= 10 && v.none(Char::isWhitespace) && (v.contains('@') || v[0].isLetter())
 
 /**
  * 未读字段候选名，按可信度排序。
@@ -288,7 +375,7 @@ internal fun ConversationGroupHook.unreadMapFor(adapter: Any): Map<String, Int> 
     val map = HashMap<String, Int>(n * 2)
     val names = HashMap<String, String>(n * 2)
     for (row in rows) {
-        val k4 = XposedHelpers.getObjectField(row, "d") ?: continue
+        val k4 = k4Of(row) ?: continue
         val u = talkerOf(k4) ?: continue
         map[u] = unreadOf(k4)
         // 显示名顺手一起取了（同一循环、同一批字段缓存），发送者副标题就不需要第二次扫描
@@ -420,7 +507,7 @@ internal fun ConversationGroupHook.buildLegacyModel(a: Any, realCount: Int, grou
     val posOf = HashMap<String, Int>(realCount * 2)
     for (i in 0 until realCount) {
         val row = rows?.getOrNull(i) ?: continue
-        val k4 = XposedHelpers.getObjectField(row, "d") ?: continue
+        val k4 = k4Of(row) ?: continue
         val u = talkerOf(k4) ?: continue
         names[i] = u
         if (!posOf.containsKey(u)) posOf[u] = i
@@ -606,7 +693,7 @@ internal fun ConversationGroupHook.onLegacyGetItem(param: MethodHookParam) {
 internal fun ConversationGroupHook.legacyUsernameAt(adapter: Any, i: Int): String? {
     return try {
         val row = legacyRows(adapter)?.getOrNull(i) ?: return null
-        val k4 = XposedHelpers.getObjectField(row, "d")
+        val k4 = k4Of(row)
         talkerOf(k4)
     } catch (t: Throwable) {
         null
