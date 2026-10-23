@@ -76,6 +76,17 @@ App 里那个「私有 WebDAV 镜像」不再是手工传的 —— 只要往仓
 
 所以给新微信版本做适配的标准流程变成：改 JSON（`revision` +1）→ 推 main → CI 自动刷镜像 → 用户手机上点「在线获取最新」即可，**不用等 APK 发版**（真正想固化进安装包时再打 tag）。
 
+### 镜像账号的权限边界
+
+这个 WebDAV 账号的密码是**硬编码在 APK 里**的（反编译即得），所以绝不能给它整个网盘的权限。当前服务端配置：
+
+```
+webdav_username  = webdav
+webdav_root_path = /wxgroup      # 账号被 chroot 在这个目录
+```
+
+已实测的越界行为：界内 `PROPFIND/PUT/DELETE` 分别 207/201/204 正常；界外 `PUT /webdav/xxx` 一律 403；`/webdav/../etc/passwd` 穿越返回 404。改 `webdav_root_path` 后**访问 URL 不变**（服务端就是把 `/webdav<root_path>/` 当根），所以客户端和 CI 都无需改动。
+
 ### 微信 8.0.79 关键混淆名对照（实测）
 
 | 角色 | 8.0.78 | 8.0.79 |
