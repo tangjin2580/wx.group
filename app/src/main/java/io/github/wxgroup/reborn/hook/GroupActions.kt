@@ -209,35 +209,92 @@ internal fun ConversationGroupHook.showRenameGroupDialog(act: android.app.Activi
         .show()
 }
 
-/** 换图标：从候选 emoji 里挑一个，点选即保存 */
+/**
+ * 换图标：两栏切换 —— 单色符号（沉浸，随主题着色）/ 彩色 emoji。
+ *
+ * 默认停在分组当前图标所属的那栏，用户不用先猜「我上次选的是哪种」。
+ * 单色符号在网格里就按本组强调色预览，所见即所得。
+ */
 internal fun ConversationGroupHook.showIconPicker(act: android.app.Activity, gid: String) {
-    val icons = GroupTheme.ICONS
-    val grid = android.widget.GridView(act).apply {
-        numColumns = 5
-        adapter = object : android.widget.BaseAdapter() {
-            override fun getCount() = icons.size
-            override fun getItem(position: Int) = icons[position]
-            override fun getItemId(position: Int) = position.toLong()
-            override fun getView(position: Int, convertView: android.view.View?, parent: android.view.ViewGroup): android.view.View {
-                val tv: android.widget.TextView = (convertView as? android.widget.TextView)
-                    ?: android.widget.TextView(act).apply {
-                        textSize = 24f
-                        gravity = Gravity.CENTER
-                        setPadding(0, dp(act, 10), 0, dp(act, 10))
-                    }
-                tv.text = icons[position]
-                return tv
+    val g = sortedGroups().firstOrNull { it.id == gid } ?: return
+    val accent = GroupTheme.colorForGroup(
+        gid, sortedGroups().indexOfFirst { it.id == gid }, wxSettings()
+    )
+    var mode = if (GroupTheme.isGlyph(g.icon)) 0 else 1
+
+    val root = android.widget.LinearLayout(act).apply {
+        orientation = android.widget.LinearLayout.VERTICAL
+    }
+    val tabs = android.widget.LinearLayout(act).apply {
+        orientation = android.widget.LinearLayout.HORIZONTAL
+        setPadding(dp(act, 16), dp(act, 8), dp(act, 16), 0)
+    }
+    val grid = android.widget.GridView(act).apply { numColumns = 6 }
+
+    val adapter = object : android.widget.BaseAdapter() {
+        var data: List<String> = GroupTheme.iconsFor(mode)
+        override fun getCount() = data.size
+        override fun getItem(position: Int) = data[position]
+        override fun getItemId(position: Int) = position.toLong()
+        override fun getView(position: Int, cv: android.view.View?, parent: android.view.ViewGroup): android.view.View {
+            val tv = (cv as? android.widget.TextView) ?: android.widget.TextView(act).apply {
+                textSize = 22f
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setPadding(0, dp(act, 12), 0, dp(act, 12))
             }
+            val icon = data[position]
+            tv.text = icon
+            // 单色符号按本组强调色预览；emoji 用不着（字体自带颜色），给回默认文字色
+            tv.setTextColor(if (GroupTheme.isGlyph(icon)) accent else if (isDark(act)) Color.WHITE else Color.BLACK)
+            return tv
         }
     }
+    grid.adapter = adapter
+
+    // 先声明成可变量：Button 的点击回调要调用 refreshTabs，而它又依赖 tabBtns，
+    // 用 var 持有闭包把「互相引用」的先后顺序解开（局部函数不能前向引用，这样写最稳）。
+    var refreshTabs: () -> Unit = {}
+    val tabBtns = listOf("单色符号", "彩色 emoji").mapIndexed { index, label ->
+        android.widget.Button(act).apply {
+            text = label
+            textSize = 13f
+            isAllCaps = false
+            minHeight = dp(act, 40)
+            setOnClickListener {
+                mode = index
+                adapter.data = GroupTheme.iconsFor(mode)
+                adapter.notifyDataSetChanged()
+                refreshTabs()
+            }
+        }.also { tabs.addView(it, android.widget.LinearLayout.LayoutParams(
+            0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+        ).apply { if (index == 0) rightMargin = dp(act, 8) }) }
+    }
+
+    refreshTabs = {
+        tabBtns.forEachIndexed { i, b ->
+            val on = i == mode
+            // 选中 = 强调色实心底，未选中 = 透明底 + 默认文字色（微信里不引入额外样式）
+            b.setBackgroundColor(if (on) accent else Color.TRANSPARENT)
+            b.setTextColor(if (on) Color.WHITE else if (isDark(act)) Color.WHITE else Color.BLACK)
+            b.setTypeface(null, if (on) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+        }
+    }
+    refreshTabs()
+    root.addView(tabs)
+    root.addView(grid, android.widget.LinearLayout.LayoutParams(
+        android.view.ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 340)
+    ))
+
     val dlg = android.app.AlertDialog.Builder(act)
-        .setTitle("选择图标")
-        .setView(grid)
+        .setTitle("选择图标（${g.name}）")
+        .setView(root)
         .setNegativeButton("取消", null)
         .create()
     grid.setOnItemClickListener { _, _, pos, _ ->
         val all = mutableGroups()
-        all.firstOrNull { it.id == gid }?.icon = icons[pos]
+        all.firstOrNull { it.id == gid }?.icon = adapter.getItem(pos)
         persistGroups(all)
         toast(act, "已更换图标")
         dlg.dismiss()

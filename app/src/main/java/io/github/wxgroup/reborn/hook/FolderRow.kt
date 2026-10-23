@@ -391,6 +391,11 @@ internal fun ConversationGroupHook.bindFolderRow(
     (holder.icon.background as? GradientDrawable)?.setColor(
         GroupTheme.blend(palette.iconBackground, accent, 0.22f)
     )
+    // 单色符号用本组的强调色画（像微信自己的单色图标，只靠形状 + 主题色区分）；
+    // 彩色 emoji 由字体自己上色，setTextColor 对它无效，保持原样即可。
+    if (GroupTheme.isGlyph(holder.icon.text?.toString().orEmpty())) {
+        holder.icon.setTextColor(accent)
+    }
     // 「已读」胶囊：低饱和浅底 + 本组强调色文字，不做大色块
     holder.readBtn.setTextColor(accent)
     (holder.readBtn.background as? GradientDrawable)?.setColor(
