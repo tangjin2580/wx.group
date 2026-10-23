@@ -80,6 +80,7 @@
     <string name="wg_icon_kill">停</string>
     <string name="wg_icon_about">关</string>
     <string name="wg_icon_theme">色</string>
+    <string name="wg_icon_update">更</string>
 
     <string name="group_manage_title">分组管理</string>
     <string name="group_add">新建分组</string>
@@ -104,4 +105,15 @@
 
     <string name="about_text">微信分组·重生\n\n在微信会话列表里创建「收纳组」，点进去就是二级页面，效果类似微信自带的「折叠的群聊」。
 所有分组数据仅保存在本机（模块 App 私有存储，经 /data/local/tmp 镜像文件在模块与微信进程间共享）。</string>
+
+    <!-- ── 检查更新 ─────────────────────────────────────────────────── -->
+    <string name="settings_check_update">检查更新</string>
+    <string name="settings_check_update_desc">在 GitHub 上查找最新发布版本</string>
+    <string name="update_checking">正在检查更新…</string>
+    <string name="update_latest">已是最新版本 (v%1$s)</string>
+    <string name="update_fail">检查失败：%1$s</string>
+    <string name="update_dialog_title">发现新版本 v%1$s</string>
+    <string name="update_dialog_msg">当前版本 v%2$s\n\n%3$s</string>
+    <string name="update_btn_download">下载安装包</string>
+    <string name="update_btn_view">查看发布说明</string>
 </resources>

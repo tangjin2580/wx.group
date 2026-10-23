@@ -19,6 +19,7 @@ import androidx.appcompat.widget.SwitchCompat
 import io.github.wxgroup.reborn.R
 import io.github.wxgroup.reborn.core.GroupStore
 import io.github.wxgroup.reborn.core.GroupTheme
+import io.github.wxgroup.reborn.core.Updater
 import io.github.wxgroup.reborn.core.WxSettings
 
 class SettingsActivity : AppCompatActivity() {
@@ -116,6 +117,12 @@ class SettingsActivity : AppCompatActivity() {
                 .setPositiveButton(android.R.string.ok, null)
                 .show()
         }
+        findViewById<View>(R.id.btn_check_update).setOnClickListener {
+            Updater.check(this, manual = true)
+        }
+
+        // 进入设置页时静默查一次更新：有新版本才弹窗，不打扰；失败也不提示
+        Updater.check(this, manual = false)
     }
 
     /**

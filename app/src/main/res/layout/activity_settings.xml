@@ -461,6 +461,36 @@
 
                     <TextView style="@style/WgChevron" />
                 </LinearLayout>
+
+                <View style="@style/WgDivider" />
+
+                <LinearLayout
+                    android:id="@+id/btn_check_update"
+                    style="@style/WgRow">
+
+                    <TextView
+                        style="@style/WgIconChip"
+                        android:text="@string/wg_icon_update" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/WgRowTitle"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_check_update" />
+
+                        <TextView
+                            style="@style/WgRowSub"
+                            android:text="@string/settings_check_update_desc" />
+                    </LinearLayout>
+
+                    <TextView style="@style/WgChevron" />
+                </LinearLayout>
             </LinearLayout>
 
         </LinearLayout>
