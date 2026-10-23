@@ -121,14 +121,11 @@ jobs:
           ./gradlew assembleDebug 2>&1 | tee /tmp/build.log
           RC=${PIPESTATUS[0]}
           if [ $RC -ne 0 ]; then
-            tail -c 6000 /tmp/build.log | jq -Rs '{body: .}' > /tmp/payload.json
-            curl -sS -X POST \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "Content-Type: application/json" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
-              --data @/tmp/payload.json | head -c 300
-            echo "::error::assembleDebug failed; log tail posted to commit comment"
+            # job logs API 匿名拉不到、commit comment 需要写权限 —— 用 ::error:: 行
+            # 变成 check-run annotations（公开可读），把日志尾部带出来
+            tail -40 /tmp/build.log | head -c 3800 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
           fi
           exit $RC
 
