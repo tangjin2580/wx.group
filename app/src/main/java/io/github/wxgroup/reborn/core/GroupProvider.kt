@@ -23,7 +23,8 @@ import org.json.JSONObject
 class GroupProvider : ContentProvider() {
 
     private val TAG = "WxGroupReborn"
-    private val AUTHORITY = "io.github.wxgroup.groups"
+    /** 跟着包名走：正式包 io.github.wxgroup.groups，调试包 io.github.wxgroup.debug.groups */
+    private val authority: String get() = "${context?.packageName ?: "io.github.wxgroup"}.groups"
     private val PATH_GROUPS = "groups"
     private val PATH_SIGNATURE = "signature"
     private val COL_DATA = "data"
@@ -46,8 +47,9 @@ class GroupProvider : ContentProvider() {
                 PATH_GROUPS -> ctx.getSharedPreferences(GroupStore.PREFS, android.content.Context.MODE_PRIVATE)
                     .getString(GroupStore.KEY_GROUPS, null)
                     ?: JSONObject().put("groups", JSONArray()).toString()
-                PATH_SIGNATURE -> GroupStore.getSignatures(ctx)?.toJson()?.toString()
-                    ?: GroupStore.embeddedSignatureJson() ?: ""
+                // 直接给「当前生效的那份」：分析器产物（版本匹配）> 用户手改 > 内置。
+                // 以前这里固定返回用户手改的，导致分析器产物永远到不了微信进程。
+                PATH_SIGNATURE -> GroupStore.effectiveSignatureJson(ctx) ?: ""
                 else -> ""
             }
         } catch (t: Throwable) {
@@ -65,7 +67,7 @@ class GroupProvider : ContentProvider() {
     }
 
     // 以下为 ContentProvider 必须实现的空方法（本模块仅用 query 通道）
-    override fun getType(uri: Uri): String? = "vnd.android.cursor.dir/$AUTHORITY"
+    override fun getType(uri: Uri): String? = "vnd.android.cursor.dir/$authority"
     override fun insert(uri: Uri, v: ContentValues?): Uri? = null
     override fun delete(uri: Uri, s: String?, sel: Array<out String>?): Int = 0
     override fun update(uri: Uri, v: ContentValues?, s: String?, sel: Array<out String>?): Int = 0

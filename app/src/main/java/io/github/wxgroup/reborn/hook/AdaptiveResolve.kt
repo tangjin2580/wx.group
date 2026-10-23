@@ -120,6 +120,19 @@ object DexKitResolver {
     var candidates: Set<String>? = null
         private set
 
+    /**
+     * 反查出的「会话长按菜单宿主」候选类名（声明 onCreateContextMenu(ContextMenu,View,Info) 的类）。
+     * 这个类每个版本都换（8.0.78 = …conversation.s3，8.0.79 = …conversation.x3），
+     * 签名 JSON 只有一份，所以交给 DexKit 出候选、运行时裁决。
+     */
+    @Volatile
+    var menuCandidates: Set<String>? = null
+        private set
+
+    /** 菜单候反查完成后的回调（由 Hook 侧挂上，用来补挂菜单注入） */
+    @Volatile
+    var onMenuCandidates: ((Set<String>) -> Unit)? = null
+
     @Volatile
     private var started = false
 
@@ -156,6 +169,7 @@ object DexKitResolver {
                     }
             }
             val found = LinkedHashSet<String>()
+            val menuFound = LinkedHashSet<String>()
             for (path in apkPaths) {
                 try {
                     DexKitBridge.create(path)?.use { bridge ->
@@ -171,15 +185,38 @@ object DexKitResolver {
                                 }
                             }
                         }?.forEach { found.add(it.name) }
+                        // 会话长按菜单宿主：onCreateContextMenu(ContextMenu, View, ContextMenuInfo)
+                        // ⚠️ 只扫会话包：全量扫会命中 114 个类（聊天记录/通讯录等菜单也是这个签名），
+                        // 全部挂上去有可能把分组项注入到别的菜单里。
+                        bridge.findClass {
+                            searchPackages("com.tencent.mm.ui.conversation")
+                            matcher {
+                                methods {
+                                    add {
+                                        name = "onCreateContextMenu"
+                                        paramTypes(
+                                            "android.view.ContextMenu",
+                                            "android.view.View",
+                                            "android.view.ContextMenu\$ContextMenuInfo"
+                                        )
+                                    }
+                                }
+                            }
+                        }?.forEach { menuFound.add(it.name) }
                     }
                 } catch (t: Throwable) {
                     XposedBridge.log("DexKit: 扫描 $path 失败: ${t.message}")
                 }
             }
             candidates = found
+            menuCandidates = menuFound
             XposedBridge.log(
                 "DexKit 反查完成: ${found.size} 个 getView 候选 -> ${found.take(8).joinToString()}"
             )
+            XposedBridge.log(
+                "DexKit 菜单宿主候选: ${menuFound.size} 个 -> ${menuFound.take(8).joinToString()}"
+            )
+            if (menuFound.isNotEmpty()) onMenuCandidates?.invoke(menuFound)
         } catch (t: Throwable) {
             XposedBridge.log("DexKit 反查异常: ${t.javaClass.simpleName}: ${t.message}")
         }

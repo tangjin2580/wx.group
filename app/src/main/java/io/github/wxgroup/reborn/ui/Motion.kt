@@ -19,6 +19,49 @@ object Motion {
     /** 主题切换的过渡时长（200–300ms 区间） */
     const val THEME_MS = 240L
 
+    /**
+     * 一组正在跑的颜色动画。
+     *
+     * ── 为什么要它 ──
+     * 以前 [animateColor] 每次调用都 `start()` 一个新 [ValueAnimator]，没人持有、
+     * 没人取消。快速连点主题卡时，前一次的 5 个 animator 还在往同一批 View 里写旧颜色，
+     * 于是出现「颜色先跳回上一个主题、再慢慢爬到新主题」的跳色；
+     * Activity 已经 finish 了它们也还在跑（持有 View 引用，属于泄漏）。
+     *
+     * 用法：持有实例 → 开新动画前 [cancelAll] → [onDestroy] 里再 [cancelAll] 一次。
+     */
+    class ColorAnimators {
+        private val running = ArrayList<ValueAnimator>()
+
+        /** 启动一个颜色过渡；同时接管它的生命周期 */
+        fun start(animator: ValueAnimator) {
+            running.add(animator)
+            animator.addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    running.remove(animation)
+                }
+
+                override fun onAnimationCancel(animation: android.animation.Animator) {
+                    running.remove(animation)
+                }
+            })
+            animator.start()
+        }
+
+        /**
+         * 取消全部在跑的动画（不再持有引用，也不会再往 View 里写颜色）。
+         *
+         * 先清空再逐个 cancel：`cancel()` 会回调上面的 onAnimationCancel，
+         * 那个回调又要从 [running] 里 remove —— 边遍历边删会 ConcurrentModificationException。
+         */
+        fun cancelAll() {
+            if (running.isEmpty()) return
+            val snapshot = ArrayList(running)
+            running.clear()
+            snapshot.forEach { it.cancel() }
+        }
+    }
+
     fun reducedMotion(context: Context): Boolean {
         val scale = Settings.Global.getFloat(
             context.contentResolver,
@@ -32,27 +75,28 @@ object Motion {
      * 颜色过渡：200ms（主题切换用 240ms，见 [THEME_MS]）从 [from] 混到 [to]，
      * 每帧把中间色交给 [onUpdate] 去刷新具体的 View。
      *
-     * 只有一个 animator、不 new 一堆对象：切换主题时最多几张卡片在动，
-     * 全程就是一次 blend 计算。系统开了「减少动效」时直接跳到终值。
+     * **不自己 start**：返回 animator 由调用方交给 [ColorAnimators] 管理，
+     * 这样「开新动画前先取消旧的」和「onDestroy 清理」才有落点。
+     * 系统开了「减少动效」时返回 null（调用方直接跳终值即可）。
      */
-    fun animateColor(
+    fun colorAnimator(
         context: Context,
         from: Int,
         to: Int,
         onUpdate: (Int) -> Unit,
         duration: Long = DURATION_MS
-    ) {
+    ): ValueAnimator? {
         if (from == to || reducedMotion(context)) {
             onUpdate(to)
-            return
+            return null
         }
-        val va = ValueAnimator.ofFloat(0f, 1f)
-        va.duration = duration
-        va.interpolator = DecelerateInterpolator()
-        va.addUpdateListener { anim ->
-            val t = anim.animatedValue as Float
-            onUpdate(GroupTheme.blend(from, to, t))
+        return ValueAnimator.ofFloat(0f, 1f).apply {
+            this.duration = duration
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { anim ->
+                val t = anim.animatedValue as Float
+                onUpdate(GroupTheme.blend(from, to, t))
+            }
         }
-        va.start()
     }
 }

@@ -20,8 +20,8 @@ android {
         // （CI 里从 tag 推导版本、或本地做灰度包时用得上）
         def vcProp = project.findProperty('versionCodeOverride')
         def vnProp = project.findProperty('versionNameOverride')
-        versionCode vcProp == null ? 26 : (vcProp as Integer)
-        versionName vnProp == null ? '1.4.1' : vnProp.toString()
+        versionCode vcProp == null ? 27 : (vcProp as Integer)
+        versionName vnProp == null ? '1.5.0' : vnProp.toString()
     }
 
     // ── 正式签名（条件启用）──────────────────────────────────────────────
@@ -60,6 +60,12 @@ android {
         }
         debug {
             minifyEnabled false
+            // 调试包独立身份（io.github.wxgroup.debug）：能和手机上已装的正式版**并存**，
+            // 不用卸载、不动任何数据（正式版与调试版之间靠 /data/local/tmp 镜像共享分组）。
+            // 代价：LSPosed 里它是另一个模块条目，测 UI 不受影响；
+            // provider 的 authority 也跟着包名走（见 AndroidManifest 的 ${applicationId}）。
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
         }
     }
 
@@ -114,4 +120,9 @@ dependencies {
     implementation 'androidx.navigation:navigation-compose:2.8.5'
 
     debugImplementation 'androidx.compose.ui:ui-tooling'
+
+    // ══ 单元测试 ══════════════════════════════════════════════════════════
+    // 只测不依赖 Android 框架的纯逻辑（分组命名规则、主题取色优先级）。
+    // 仅 junit 一个 testImplementation，不进 APK，不影响 LSPosed 运行环境。
+    testImplementation 'junit:junit:4.13.2'
 }

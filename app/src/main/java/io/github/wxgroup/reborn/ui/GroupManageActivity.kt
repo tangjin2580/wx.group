@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import io.github.wxgroup.reborn.R
+import io.github.wxgroup.reborn.core.GroupNameRules
 import io.github.wxgroup.reborn.core.GroupStore
 import io.github.wxgroup.reborn.core.WxGroup
 
@@ -95,26 +96,46 @@ class GroupManageActivity : AppCompatActivity() {
     }
 
     private fun createGroup(username: String? = null) {
-        val input = EditText(this).apply { hint = getString(R.string.group_name_hint) }
+        val input = EditText(this).apply {
+            hint = getString(R.string.group_name_hint)
+            // 直接限长，别让用户敲完一大串才被告知超长
+            filters = arrayOf(android.text.InputFilter.LengthFilter(GroupNameRules.MAX_LENGTH))
+        }
         AlertDialog.Builder(this)
             .setTitle(R.string.group_add)
             .setView(input)
             .setPositiveButton(android.R.string.ok) { _, _ ->
-                val name = input.text.toString().trim()
-                if (name.isNotEmpty()) {
-                    // id 用十进制毫秒时间戳，和微信侧建的分组保持一致 ——
-                    // GroupStore.orderKey() 就是靠这个从 id 推出创建顺序的
-                    val id = PREFIX + System.currentTimeMillis()
-                    val nextOrder = (groups.maxOfOrNull { it.order } ?: 0) + 1
-                    GroupStore.createGroup(this, WxGroup(id, name, order = nextOrder), username)
-                    if (username != null) {
-                        Toast.makeText(this, "已新建「$name」并加入", Toast.LENGTH_SHORT).show()
-                        finish()
-                    } else refresh()
+                // 以前不写库也不提示，用户点了「确定」却毫无反应，以为卡了
+                if (!ensureValidName(input.text?.toString())) return@setPositiveButton
+                val name = GroupNameRules.normalize(input.text?.toString())
+                // id 用十进制毫秒时间戳，和微信侧建的分组保持一致 ——
+                // GroupStore.orderKey() 就是靠这个从 id 推出创建顺序的
+                val id = PREFIX + System.currentTimeMillis()
+                val nextOrder = (groups.maxOfOrNull { it.order } ?: 0) + 1
+                GroupStore.createGroup(this, WxGroup(id, name, order = nextOrder), username)
+                if (username != null) {
+                    Toast.makeText(this, "已新建「$name」并加入", Toast.LENGTH_SHORT).show()
+                    finish()
+                } else {
+                    Toast.makeText(this, getString(R.string.group_created, name), Toast.LENGTH_SHORT).show()
+                    refresh()
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    /** 名称不合法时弹提示并返回 false（调用方据此中断提交） */
+    /** 名称合法返回 true；不合法就弹具体原因并返回 false（调用方据此中断提交） */
+    private fun ensureValidName(raw: String?): Boolean {
+        val msg = when (GroupNameRules.check(raw)) {
+            GroupNameRules.Error.NONE -> return true
+            GroupNameRules.Error.BLANK -> getString(R.string.group_name_error_blank)
+            GroupNameRules.Error.TOO_LONG ->
+                getString(R.string.group_name_error_too_long, GroupNameRules.MAX_LENGTH)
+        }
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        return false
     }
 
     private fun editGroup(group: WxGroup) {
@@ -169,13 +190,21 @@ class GroupManageActivity : AppCompatActivity() {
     }
 
     private fun renameGroup(group: WxGroup) {
-        val input = EditText(this).apply { setText(group.name) }
+        val input = EditText(this).apply {
+            // 回填当前名称：重命名就该从「现在的名字」改起
+            setText(group.name)
+            setSelection(group.name.length)
+            filters = arrayOf(android.text.InputFilter.LengthFilter(GroupNameRules.MAX_LENGTH))
+        }
         AlertDialog.Builder(this)
             .setTitle(R.string.group_rename)
             .setView(input)
             .setPositiveButton(android.R.string.ok) { _, _ ->
-                val name = input.text.toString().trim()
-                if (name.isNotEmpty()) { GroupStore.updateGroup(this, group.id) { it.name = name }; refresh() }
+                if (!ensureValidName(input.text?.toString())) return@setPositiveButton
+                val name = GroupNameRules.normalize(input.text?.toString())
+                GroupStore.updateGroup(this, group.id) { it.name = name }
+                Toast.makeText(this, getString(R.string.group_renamed, name), Toast.LENGTH_SHORT).show()
+                refresh()
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()

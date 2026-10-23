@@ -1,6 +1,7 @@
 package io.github.wxgroup.reborn.ui
 
 import android.content.res.Configuration
+import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.util.TypedValue
@@ -36,6 +37,9 @@ class ThemeActivity : AppCompatActivity() {
     /** 当前设置（每次改动都整体写回，字段不会被别的入口冲掉） */
     private lateinit var settings: WxSettings
     private var groups: List<WxGroup> = emptyList()
+
+    /** 预览的颜色动画统一托管：切主题前先取消上一批，onDestroy 再清一次 */
+    private val previewAnimators = Motion.ColorAnimators()
 
     /** 主题卡的句柄（切主题时只更新选中态描边/打勾） */
     private class ThemeCard(val card: View, val check: TextView)
@@ -82,6 +86,7 @@ class ThemeActivity : AppCompatActivity() {
             applyNightMode()
             recreate()
         }
+        restyleResetButton()
     }
 
     override fun onResume() {
@@ -92,6 +97,13 @@ class ThemeActivity : AppCompatActivity() {
             groups = fresh
             renderGroups()
         }
+    }
+
+    override fun onDestroy() {
+        // Activity 没了，动画必须跟着停：否则 animator 还攥着 Row / TextView 的引用，
+        // 每帧往一个已经 detach 的 View 上写颜色
+        previewAnimators.cancelAll()
+        super.onDestroy()
     }
 
     // ==================================================================================
@@ -113,17 +125,39 @@ class ThemeActivity : AppCompatActivity() {
 
     private fun bindModeButton(id: Int, selected: Boolean, onClick: () -> Unit) {
         val b = findViewById<Button>(id)
-        // 选中 = 实心主按钮，未选中 = 描边次要按钮（两种状态都带圆角水波纹）
-        b.setBackgroundResource(
-            if (selected) R.drawable.bg_wg_button else R.drawable.bg_wg_button_outlined
-        )
-        b.setTextColor(
-            ContextCompat.getColor(
-                this,
-                if (selected) android.R.color.white else R.color.wg_brand
-            )
-        )
+        // 选中 = 实心主按钮，未选中 = 描边次要按钮。
+        // 背景在代码里按**当前主题主色**生成（以前是写死的品牌绿 drawable，
+        // 选了「天空蓝」主题，这三个按钮还是绿的 —— 预览和实际对不上）。
+        val primary = GroupTheme.of(settings.themeId).palette(previewDark()).primary
+        b.background = buttonBg(selected, primary)
+        b.setTextColor(if (selected) GroupTheme.onColorFor(primary) else primary)
         b.setOnClickListener { onClick() }
+    }
+
+    /**
+     * 按钮底：主色实心 / 主色描边，外面套 [RippleDrawable] 保留按下水波纹。
+     *
+     * 不用 `setBackgroundResource` 那两个 drawable —— 它们的颜色写死在 XML 里，
+     * 改不了；这里改成代码生成，但**波纹不能省**，否则按下去没有任何反馈。
+     */
+    private fun buttonBg(filled: Boolean, primary: Int): android.graphics.drawable.Drawable {
+        val radius = resources.getDimension(R.dimen.wg_radius_btn)
+        val shape = GradientDrawable().apply {
+            cornerRadius = radius
+            if (filled) setColor(primary)
+            else {
+                setColor(Color.TRANSPARENT)
+                setStroke(dp(1f), primary)
+            }
+        }
+        val mask = GradientDrawable().apply {
+            cornerRadius = radius
+            setColor(Color.WHITE)
+        }
+        val ripple = android.content.res.ColorStateList.valueOf(
+            if (filled) 0x33FFFFFF.toInt() else 0x14000000
+        )
+        return android.graphics.drawable.RippleDrawable(ripple, shape, mask)
     }
 
     private fun setMode(mode: String) {
@@ -317,23 +351,31 @@ class ThemeActivity : AppCompatActivity() {
         pv.sub.setTextColor(p.textSecondary)
     }
 
-    /** 颜色过渡：240ms，从旧配色混到新配色（系统「减少动效」时直接跳终值） */
+    /**
+     * 颜色过渡：240ms，从旧配色混到新配色（系统「减少动效」时直接跳终值）。
+     *
+     * 开新动画前先 [Motion.ColorAnimators.cancelAll] —— 快速连点主题卡时，
+     * 上一批 animator 若还活着会往同一批 View 里写旧颜色，看起来就是「跳色」。
+     */
     private fun animatePreview(
         pv: PreviewRow,
         from: GroupTheme.Palette, fromAccent: Int,
         to: GroupTheme.Palette, toAccent: Int
     ) {
-        Motion.animateColor(this, from.normalBackground, to.normalBackground,
+        previewAnimators.cancelAll()
+        Motion.colorAnimator(this, from.normalBackground, to.normalBackground,
             { c -> (pv.row.background as? GradientDrawable)?.setColor(c) }, Motion.THEME_MS)
-        Motion.animateColor(this, fromAccent, toAccent, { c ->
+            ?.let { previewAnimators.start(it) }
+        Motion.colorAnimator(this, fromAccent, toAccent, { c ->
             (pv.bar.background as? GradientDrawable)?.setColor(c)
-        }, Motion.THEME_MS)
-        Motion.animateColor(this, from.iconBackground, to.iconBackground, { c ->
+        }, Motion.THEME_MS)?.let { previewAnimators.start(it) }
+        Motion.colorAnimator(this, from.iconBackground, to.iconBackground, { c ->
             (pv.icon.background as? GradientDrawable)?.setColor(GroupTheme.blend(c, toAccent, 0.22f))
-        }, Motion.THEME_MS)
-        Motion.animateColor(this, from.textPrimary, to.textPrimary, { c -> pv.name.setTextColor(c) }, Motion.THEME_MS)
-        Motion.animateColor(this, from.textSecondary, to.textSecondary,
-            { c -> pv.sub.setTextColor(c) }, Motion.THEME_MS)
+        }, Motion.THEME_MS)?.let { previewAnimators.start(it) }
+        Motion.colorAnimator(this, from.textPrimary, to.textPrimary,
+            { c -> pv.name.setTextColor(c) }, Motion.THEME_MS)?.let { previewAnimators.start(it) }
+        Motion.colorAnimator(this, from.textSecondary, to.textSecondary,
+            { c -> pv.sub.setTextColor(c) }, Motion.THEME_MS)?.let { previewAnimators.start(it) }
     }
 
     private fun selectTheme(id: String) {
@@ -362,7 +404,19 @@ class ThemeActivity : AppCompatActivity() {
         curAccent = toAccent
         // 单组配色的候选色板来自当前主题，跟着换
         renderGroups()
+        // 模式按钮 / 重置按钮的颜色也取自当前主题主色，切主题后必须重刷，
+        // 否则选了「莫兰迪」顶部按钮还是绿的（预览和实际对不上）
+        bindModes()
+        restyleResetButton()
         toastApplied()
+    }
+
+    /** 「重置主题」按钮：与模式按钮同一套主题色描边样式（XML 里的颜色写死了，只能代码覆盖） */
+    private fun restyleResetButton() {
+        val b = findViewById<Button>(R.id.btn_reset_theme)
+        val primary = GroupTheme.of(settings.themeId).palette(previewDark()).primary
+        b.background = buttonBg(false, primary)
+        b.setTextColor(primary)
     }
 
     private fun toastApplied() {
@@ -413,8 +467,9 @@ class ThemeActivity : AppCompatActivity() {
                 minimumWidth = 0
                 isAllCaps = false
                 setPadding(dp(10f), 0, dp(10f), 0)
-                setBackgroundResource(R.drawable.bg_wg_button_outlined)
-                setTextColor(ContextCompat.getColor(this@ThemeActivity, R.color.wg_brand))
+                // 「跟随主题」按钮也用当前主题主色描边，跟上面的模式按钮保持一致
+                background = buttonBg(false, GroupTheme.of(settings.themeId).palette(dark).primary)
+                setTextColor(GroupTheme.of(settings.themeId).palette(dark).primary)
                 visibility = if (custom == null) View.GONE else View.VISIBLE
                 setOnClickListener { clearGroupColor(g.id) }
             }

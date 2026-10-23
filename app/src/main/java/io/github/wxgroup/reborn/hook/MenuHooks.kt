@@ -65,13 +65,131 @@ internal fun ConversationGroupHook.installContextMenuHook(loader: ClassLoader, s
     }
 }
 
+// ==================================================================================
+// 动态捕获菜单宿主（8.0.78 起的主力路径）
+// ==================================================================================
+
+/**
+ * 已经注入过的菜单对象（弱引用，随菜单回收）。
+ *
+ * 为什么需要：注入点现在有两条（签名类 + 动态捕获），同一个菜单宿主可能被两条都挂到，
+ * 不去重的话用户会看到两份「添加到分组」。
+ */
+private val injectedMenus = java.util.Collections.newSetFromMap(
+    java.util.WeakHashMap<ContextMenu, Boolean>()
+)
+
+/**
+ * 挂 `View.setOnCreateContextMenuListener`，把微信真正使用的菜单宿主**动态**收编。
+ *
+ * 为什么不再依赖签名里的类名：会话长按菜单的宿主类每个版本都在换
+ * （8.0.78 是 `…conversation.s3`，8.0.79 变成 `…conversation.x3`），签名 JSON 只有一份，
+ * 换版本就静默失效 —— 表现是「微信自己的菜单照常弹，但里面没有我们的分组项」。
+ *
+ * 这里改成抓 framework 的 setter（`View.setOnCreateContextMenuListener` 稳定不混淆）：
+ * 微信把宿主塞进来的那一刻我们就拿到实例，再按「方法名 + 参数里有没有 ContextMenu」
+ * 挂它的 `onCreateContextMenu`。之后仍由 [injectGroupMenu] 做运行时裁决
+ * （拿不到 talker 就不注入），所以误抓到别的监听器也不会出乱子。
+ */
+internal fun ConversationGroupHook.installContextMenuTrap() {
+    try {
+        val setter = View::class.java.getDeclaredMethod(
+            "setOnCreateContextMenuListener", View.OnCreateContextMenuListener::class.java
+        )
+        XposedBridge.hookMethod(setter, object : XC_MethodHook() {
+            override fun afterHookedMethod(param: MethodHookParam) {
+                val v = param.thisObject as? View ?: return
+                val lis = param.args.getOrNull(0) ?: return
+                trapMenuListener(lis, v)
+            }
+        })
+        log("已挂载 Hook: View.setOnCreateContextMenuListener（动态捕获会话菜单宿主）")
+    } catch (t: Throwable) {
+        log("菜单宿主捕获挂载失败: ${t.javaClass.simpleName}: ${t.message}")
+    }
+}
+
+/** 已挂过的宿主实例（按身份哈希记，避免同一个实例重复挂） */
+private val trappedListeners = java.util.Collections.synchronizedSet(HashSet<Int>())
+
+private fun ConversationGroupHook.trapMenuListener(lis: Any, host: View) {
+    if (!trappedListeners.add(System.identityHashCode(lis))) return
+    val cls = lis.javaClass
+    val m = cls.declaredMethods.firstOrNull {
+        it.name == "onCreateContextMenu" &&
+            it.parameterTypes.size == 3 &&
+            it.parameterTypes[0].let { p -> ContextMenu::class.java.isAssignableFrom(p) || p.name == "android.view.ContextMenu" }
+    } ?: return
+    m.isAccessible = true
+    try {
+        XposedBridge.hookMethod(m, object : XC_MethodHook() {
+            // 用 after：微信已经把自己的菜单项加完了，我们追加在后面
+            override fun afterHookedMethod(param: MethodHookParam) {
+                try {
+                    injectGroupMenu(param)
+                } catch (t: Throwable) {
+                    log("动态菜单注入异常: ${t.javaClass.simpleName}: ${t.message}")
+                }
+            }
+        })
+        log("已捕获菜单宿主: ${cls.name}（宿主View=${host.javaClass.name}）")
+    } catch (t: Throwable) {
+        log("菜单宿主挂载失败 ${cls.name}: ${t.message}")
+    }
+}
+
 /**
  * 往微信的长按菜单里加两项：`添加到分组`（可选具体分组）与 `新建分组`。
  * 两个动作都在**微信界面内**用对话框完成，不跳模块 App —— 体验连贯，
  * 也彻底避开跨应用 startActivity 的那些坑。
  */
+/** 「菜单实参不是 android.view.ContextMenu」的诊断条数上限 */
+private var menuMissLogged = 0
+
+/** 按 DexKit 反查出的候选类名补挂菜单注入（签名类名换版本失效时的主力路径） */
+internal fun ConversationGroupHook.hookMenuCandidates(loader: ClassLoader, names: Set<String>) {
+    var hooked = 0
+    for (n in names) {
+        // 只认会话包里的宿主，避免把分组项加进聊天记录/通讯录的菜单
+        if (!n.startsWith("com.tencent.mm.ui.conversation")) continue
+        val cls = ReflectionUtil.findClass(loader, n) ?: continue
+        val m = cls.declaredMethods.firstOrNull {
+            it.name == "onCreateContextMenu" && it.parameterTypes.size == 3
+        } ?: continue
+        m.isAccessible = true
+        try {
+            XposedBridge.hookMethod(m, object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        injectGroupMenu(param)
+                    } catch (t: Throwable) {
+                        log("菜单候选注入异常: ${t.javaClass.simpleName}: ${t.message}")
+                    }
+                }
+            })
+            hooked++
+        } catch (_: Throwable) {
+        }
+    }
+    log("菜单宿主候选已挂载: $hooked/${names.size} -> ${names.take(5).joinToString()}")
+}
+
 internal fun ConversationGroupHook.injectGroupMenu(param: MethodHookParam) {
-    val menu = param.args.firstOrNull { it is ContextMenu } as? ContextMenu ?: return
+    val menu = param.args.firstOrNull { it is ContextMenu } as? ContextMenu
+    if (menu == null) {
+        // 8.0.78 上微信传的可能是自己的菜单类型（不是 android.view.ContextMenu），
+        // 这条日志用来确认「到底是不是这个原因」。
+        if (menuMissLogged < 5) {
+            menuMissLogged++
+            log("菜单注入跳过: 实参里没有 android ContextMenu -> ${param.args.map { it?.javaClass?.name }}")
+        }
+        return
+    }
+    // 同一个菜单只注入一次（签名类路径与动态捕获路径可能都命中它）
+    if (!injectedMenus.add(menu)) return
+    // 菜单宿主类名也回传给分析器：静态反查靠 onCreateContextMenu 签名，
+    // 能命中但偶尔多候选；这里拿到的是真正被回调的那个类。
+    param.thisObject?.javaClass?.name?.let { noteRuntimeProbe("menu", it) }
     val view = param.args.firstOrNull { it is View } as? View
     val talker = (ReflectionUtil.getFieldValue(param.thisObject, listOf("g", "talker", "username")) as? String)
         ?: view?.let { extractUsername(it) }

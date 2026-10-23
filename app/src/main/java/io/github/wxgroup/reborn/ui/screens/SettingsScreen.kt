@@ -15,6 +15,7 @@ import androidx.compose.material.icons.rounded.Article
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
@@ -43,6 +44,7 @@ import io.github.wxgroup.reborn.ui.theme.IconMint
 import io.github.wxgroup.reborn.ui.theme.IconOrange
 import io.github.wxgroup.reborn.ui.theme.IconPurple
 import io.github.wxgroup.reborn.ui.theme.IconTeal
+import io.github.wxgroup.reborn.ui.theme.LocalAppColors
 import io.github.wxgroup.reborn.ui.theme.StatusError
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -66,6 +68,7 @@ fun SettingsScreen(
     contentPadding: PaddingValues,
     onTheme: () -> Unit,
     onSignature: () -> Unit,
+    onAnalyzer: () -> Unit,
     onLog: () -> Unit,
     onBadgeDot: (Boolean) -> Unit,
     onHideEmpty: (Boolean) -> Unit,
@@ -73,6 +76,7 @@ fun SettingsScreen(
     onSenders: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
+    val colors = LocalAppColors.current
     // 「强杀微信」确认弹窗
     var showKillDialog by remember { mutableStateOf(false) }
 
@@ -92,7 +96,9 @@ fun SettingsScreen(
             SettingsGroup(title = "外观") {
                 SettingsItem(
                     icon = Icons.Rounded.Palette,
-                    iconTint = IconMint,
+                    // 这一条的图标色 = 当前主题主色：它就是「外观」的入口，
+                    // 颜色本身要能告诉用户现在用的是哪套主题
+                    iconTint = colors.primary,
                     title = "外观与主题",
                     subtitle = "8 套内置主题，支持深浅色",
                     valueText = GroupTheme.labelOf(state.themeId),
@@ -122,7 +128,7 @@ fun SettingsScreen(
                 )
                 SettingsSwitchItem(
                     icon = Icons.Rounded.Info,
-                    iconTint = IconMint,
+                    iconTint = IconMint,   // 功能色相：只用来区分条目，不表达主题
                     title = "收纳组行紧凑模式",
                     subtitle = "行更矮，一屏显示更多会话",
                     checked = state.compactRows,
@@ -148,6 +154,13 @@ fun SettingsScreen(
                     title = "微信签名配置",
                     subtitle = "按你的微信版本补全 Hook 方法签名",
                     onClick = onSignature
+                )
+                SettingsItem(
+                    icon = Icons.Rounded.Search,
+                    iconTint = IconMint,
+                    title = "签名分析器",
+                    subtitle = "扫描微信 dex，自动反查类名与字段名（需 root）",
+                    onClick = onAnalyzer
                 )
                 SettingsItem(
                     icon = Icons.Rounded.Article,

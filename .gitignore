@@ -41,3 +41,11 @@ keystore.properties
 # 本地拆分/备份/补丁脚本（工作产物，不入库）
 .tmp/
 *.bak
+
+# 本机测试产物（设备数据备份 / 截图），不入库
+.device_backup/
+.shots/
+
+# 本次设备实测产物（分析器 dump / 截图 / logcat），不入库
+.diag/
+.diag78/

@@ -60,6 +60,22 @@ class ConversationGroupHook {
     internal var sig: WeChatSignatures? = null
     internal var hookedLoader: ClassLoader? = null
 
+    // ===== 字段名（签名驱动，带代码内默认候选兜底） =====
+
+    /**
+     * 逻辑字段（"username"/"flag"/"unread"/"remark"/"nickname"）的候选真实字段名。
+     *
+     * 顺序：**签名里配的在前，代码内默认候选在后**。
+     * 签名优先是为了让内置分析器的产物能真正生效（8.0.78 这一类名被整体重排过，
+     * 字段也可能换名）；保留默认兜底是为了签名里没配这项时行为完全不变。
+     */
+    internal fun fieldNames(key: String, defaults: List<String>): List<String> =
+        sig?.fieldNames(key, defaults) ?: defaults
+
+    /** 单个字段名（取第一个候选） */
+    internal fun fieldName(key: String, default: String): String =
+        fieldNames(key, listOf(default)).firstOrNull() ?: default
+
     // ===== 分组缓存 =====
     /** 当前「打开」的分组 id —— 打开后会话列表只显示该分组的成员（二级页面语义） */
     internal var openGroupId: String? = null
@@ -170,6 +186,17 @@ class ConversationGroupHook {
     internal var unreadDiffLogged = 0
     /** 「置顶会话保留在主列表」日志的条数上限（每次建模型都会算一遍，不限制会刷屏） */
     internal var pinnedLogged = 0
+    /** 收拢诊断（行类/k4/talker 命中数）只打一次，避免刷屏 */
+    internal var foldDiagLogged = false
+    /** 长按诊断（performLongPress / 长按监听器各走哪条路）条数上限 */
+    internal var longPressDiagLogged = 0
+
+    /**
+     * 运行时实测到的类名 / 字段名（adapter / storage / menu / username / flag / unread …）。
+     * 由 [recordRuntimeProbe] 在首次成功解析时填一次，写进运行日志供内置分析器读取。
+     */
+    internal val runtimeProbe = java.util.Collections.synchronizedMap(LinkedHashMap<String, String>())
+    internal var runtimeProbeLogged = false
 
     /** 列表不可见时的连续空转次数（用于退避停轮询，省电） */
     internal var pollIdle = 0
@@ -527,6 +554,7 @@ class ConversationGroupHook {
         installListViewPath(loader, s)
         installRecyclerViewPath(loader, s)
         installContextMenuHook(loader, s)
+        installContextMenuTrap()   // 8.0.78 起的主力：动态捕获菜单宿主，不依赖签名类名
         installMenuActionHook(loader, s)
     }
 

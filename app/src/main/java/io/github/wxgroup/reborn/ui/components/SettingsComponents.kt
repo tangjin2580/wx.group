@@ -1,9 +1,7 @@
 package io.github.wxgroup.reborn.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -11,8 +9,6 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,9 +37,6 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -148,7 +141,7 @@ fun SettingsGroup(
             // 卡片纯白（深色 #1C1C1E），无阴影，只有极淡描边
             colors = CardDefaults.cardColors(containerColor = colors.cardBg),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-            border = BorderStroke(0.5.dp, colors.cardStroke)
+            border = BorderStroke(0.5.dp, colors.outlineVariant)
         ) {
             Column(content = content)
         }
@@ -158,8 +151,13 @@ fun SettingsGroup(
 /**
  * 普通设置条目（可点击跳转）。
  *
- * 行高最小 52dp；左侧 30dp 图标底块；右侧可选「值文本 + chevron」。
- * 按下时整体缩放到 0.97，松手回弹 —— 规范里要的「轻微缩放」反馈。
+ * 行高最小 52dp（触摸区够了）；左侧 30dp 图标底块；右侧可选「值文本 + chevron」。
+ *
+ * ── 按下反馈 ──
+ * 以前这里 `indication = null` 把涟漪**关掉了**，注释却写着「交给下面的行内涟漪处理」——
+ * 而下面根本没有涟漪，只有 0.97 的缩放。结果就是点设置项几乎没有任何反馈。
+ * 现在改成默认涟漪（[LocalIndication]），并去掉缩放：
+ * 同一组件叠「涟漪 + 缩放」两种按压反馈会互相打架，保留更标准、也更好认的涟漪。
  */
 @Composable
 fun SettingsItem(
@@ -172,25 +170,12 @@ fun SettingsItem(
     onClick: (() -> Unit)? = null
 ) {
     val colors = LocalAppColors.current
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.97f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "itemScale"
-    )
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 52.dp)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
             .clickable(
-                interactionSource = interaction,
-                indication = null,          // 交给下面的行内涟漪处理
                 enabled = onClick != null,
                 onClick = { onClick?.invoke() }
             )
@@ -286,8 +271,9 @@ fun SettingsSwitchItem(
             checked = checked,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = io.github.wxgroup.reborn.ui.theme.Mint40,
+                // 开启态跟着当前主题走（以前写死薄荷绿，换了主题开关不变色）
+                checkedThumbColor = colors.onPrimary,
+                checkedTrackColor = colors.primary,
                 uncheckedThumbColor = Color.White,
                 uncheckedTrackColor = colors.textSecondary.copy(alpha = 0.35f),
                 uncheckedBorderColor = Color.Transparent
@@ -309,12 +295,17 @@ fun CollapsibleCard(
     text: String
 ) {
     val colors = LocalAppColors.current
+    // 箭头跟着展开态转，让「点这里会展开」这件事可见
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        label = "arrowRotation"
+    )
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = CardShape,
         colors = CardDefaults.cardColors(containerColor = colors.cardBg),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = BorderStroke(0.5.dp, colors.cardStroke)
+        border = BorderStroke(0.5.dp, colors.outlineVariant)
     ) {
         Column {
             // 标题行：点整行切换展开 / 收起
@@ -345,8 +336,8 @@ fun CollapsibleCard(
                     tint = colors.textSecondary,
                     modifier = Modifier
                         .size(22.dp)
-                        .graphicsLayer { rotationZ = if (expanded) 180f else 0f }
-            )
+                        .graphicsLayer { rotationZ = arrowRotation }
+                )
             }
 
             AnimatedVisibility(

@@ -29,6 +29,12 @@ object GroupStore {
     const val KEY_GROUPS = "groups"
     const val KEY_SIGNATURE = "signature"
     const val KEY_SETTINGS = "settings"
+    /**
+     * 内置分析器的产物库：{"8.0.78": "<签名 JSON>", "8.0.79": "..."}。
+     * 按微信版本分键存放，换版本/升级微信时旧产物自动失效（回退到内置签名），
+     * 也不会被 [ensureDefaults] 的「内置 revision 更高就覆盖」逻辑波及。
+     */
+    private const val KEY_ANALYZED = "signature_analyzed"
     /** 上次与镜像同步（App 写出或导入）时镜像的 stamp；没变就说明没有新的外部改动 */
     private const val KEY_MIRROR_STAMP = "mirror_stamp"
     /** 模块 App 最后一次写「偏好镜像」时的 stamp —— 用来发现微信进程侧的改动（例如在微信里改了分组颜色） */
@@ -43,6 +49,16 @@ object GroupStore {
 
     /** 偏好设置的跨进程镜像（同 TMP_GROUPS 的通道，见 WxSettings 注释） */
     private const val TMP_SETTINGS = "/data/local/tmp/wxgroup_reborn_settings.json"
+
+    /**
+     * 签名分析器产物的跨进程镜像。
+     *
+     * 必须走 /data/local/tmp 而不是只靠 ContentProvider：AppsFilter 在多数 ROM 上
+     * 会拦掉微信对模块 Provider 的查询（8.0.78 那台实测就是查不到，日志里
+     * 「加载微信签名: version=8.0.79」说明用的还是内置那份），而 /data/local/tmp
+     * 这条通道已验证可用（分组与偏好都靠它）。
+     */
+    private const val TMP_SIGNATURE = "/data/local/tmp/wxgroup_reborn_signature.json"
 
     /** 微信私有目录里的偏好落点（微信侧一般不写它，仅作兼容读取） */
     private val CHATGROUP_SETTINGS_FILES = listOf(
@@ -66,8 +82,17 @@ object GroupStore {
         "/data/data/com.tencent.mm/files/chatgroup_groups.json"
     )
 
-    /** Provider 通道（模块 App → 微信进程的回退通道，也是「分组已变更」通知的 URI） */
+    /**
+     * Provider 通道的固定 authority（**微信 Hook 侧**用这个：微信进程里拿不到本模块的
+     * packageName，只能按约定好的 authority 查）。
+     *
+     * 模块 App 侧请用 [providerUri] —— 它按当前包名拼，于是调试包（io.github.wxgroup.debug）
+     * 查的是自己的 provider，不会跑到正式包那边去读（正式包/调试包并存时这点很关键）。
+     */
     const val PROVIDER_URI = "content://io.github.wxgroup.groups"
+
+    /** 本进程 provider 的 URI：authority 跟着 applicationId 走 */
+    fun providerUri(ctx: Context): String = "content://${ctx.packageName}.groups"
 
     // ===== 模块 App 侧（运行在模块进程） =====
 
@@ -93,6 +118,9 @@ object GroupStore {
         if (!p.contains(KEY_GROUPS)) {
             writePref(ctx, KEY_GROUPS, JSONObject().put("groups", JSONArray()).toString())
         }
+        // /data/local/tmp 会被系统或重启清掉，镜像丢了微信进程就退回内置签名。
+        // 每次启动补一次：本地还有匹配当前微信版本的分析产物就重新镜像过去。
+        syncAnalyzedMirror(ctx)
         // 微信进程写进镜像的分组（例如在微信界面里新建的）并回本地，两边列表保持一致。
         // ⚠️ 这里**不要**再 mirrorGroupsToTmp：镜像才是权威数据（微信进程在真机上随时改它），
         //    启动时用陈旧的本地副本回写镜像会把用户在微信里刚做的改动冲掉（实测丢过成员）。
@@ -348,6 +376,16 @@ object GroupStore {
         return str?.let { try { WeChatSignatures.fromJson(JSONObject(it)) } catch (t: Throwable) { null } }
     }
 
+    /** 当前生效签名的解析结果（分析产物 > 手改 > 内置），供 UI 显示真实来源 */
+    fun effectiveSignatures(ctx: Context): WeChatSignatures? =
+        effectiveSignatureJson(ctx)?.let {
+            try {
+                WeChatSignatures.fromJson(JSONObject(it))
+            } catch (t: Throwable) {
+                null
+            }
+        }
+
     fun saveSignature(ctx: Context, json: String): Boolean {
         return try { JSONObject(json); writePref(ctx, KEY_SIGNATURE, json); true }
         catch (t: Throwable) { false }
@@ -359,6 +397,107 @@ object GroupStore {
         catch (t: Throwable) { false }
     }
 
+    // ===== 签名分析器产物（按微信版本缓存） =====
+
+    /** 存一份分析产物（键 = 微信版本）。同版本再次分析会覆盖 */
+    fun saveAnalyzedSignature(ctx: Context, version: String, json: String): Boolean {
+        if (version.isBlank()) return false
+        return try {
+            JSONObject(json)   // 先校验，别把坏 JSON 写进去
+            val root = JSONObject(prefs(ctx).getString(KEY_ANALYZED, null) ?: "{}")
+            root.put(version, json)
+            writePref(ctx, KEY_ANALYZED, root.toString())
+            mirrorSignatureToTmp(json)      // 让微信进程真的能读到（Provider 常被 AppsFilter 拦）
+            notifyGroupsChanged(ctx)
+            Log.i(TAG, "已保存分析产物: 微信 $version")
+            true
+        } catch (t: Throwable) {
+            Log.e(TAG, "保存分析产物失败: ${t.message}")
+            false
+        }
+    }
+
+    /** 启动时把「匹配当前微信版本」的分析产物补写进镜像（镜像丢了也能自愈） */
+    private fun syncAnalyzedMirror(ctx: Context) {
+        val v = installedWechatVersion(ctx) ?: return
+        val json = analyzedSignatureFor(ctx, v) ?: return
+        val f = java.io.File(TMP_SIGNATURE)
+        val cur = runCatching { if (f.canRead()) f.readText() else "" }.getOrDefault("")
+        if (cur.contains(v)) return          // 镜像已是这一版，不用重写
+        mirrorSignatureToTmp(json)
+    }
+
+    /**
+     * 把当前生效的分析产物镜像到 /data/local/tmp。
+     * 文件若不存在，模块 App 在 SELinux 下建不出来，先用 root 建（同分组镜像的做法）。
+     */
+    private fun mirrorSignatureToTmp(json: String) {
+        try {
+            val f = java.io.File(TMP_SIGNATURE)
+            if (!f.exists()) {
+                val p = Runtime.getRuntime().exec(
+                    arrayOf("su", "-c", "touch $TMP_SIGNATURE && chmod 666 $TMP_SIGNATURE")
+                )
+                p.outputStream.close()
+                p.waitFor(8, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            if (atomicWriteText(f, json)) {
+                makeWorldReadable(TMP_SIGNATURE)
+                Log.i(TAG, "分析产物已镜像到 $TMP_SIGNATURE")
+            } else {
+                Log.e(TAG, "分析产物镜像失败（微信进程将回退到内置签名）")
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "分析产物镜像异常: ${t.message}")
+        }
+    }
+
+    /** 取某个微信版本的分析产物；没有返回 null */
+    fun analyzedSignatureFor(ctx: Context, version: String): String? = try {
+        val root = JSONObject(prefs(ctx).getString(KEY_ANALYZED, null) ?: "{}")
+        root.optString(version, "").takeIf { it.isNotEmpty() }
+    } catch (_: Throwable) {
+        null
+    }
+
+    /** 已缓存过分析产物的微信版本列表（新的在前） */
+    fun analyzedVersions(ctx: Context): List<String> = try {
+        val root = JSONObject(prefs(ctx).getString(KEY_ANALYZED, null) ?: "{}")
+        root.keys().asSequence().toList().sortedDescending()
+    } catch (_: Throwable) {
+        emptyList()
+    }
+
+    fun clearAnalyzedSignature(ctx: Context, version: String) {
+        try {
+            val root = JSONObject(prefs(ctx).getString(KEY_ANALYZED, null) ?: "{}")
+            root.remove(version)
+            writePref(ctx, KEY_ANALYZED, root.toString())
+            // 镜像也要一起清，否则微信进程还在用旧产物
+            val cur = installedWechatVersion(ctx)
+            if (cur == version) {
+                runCatching { java.io.File(TMP_SIGNATURE).takeIf { it.exists() }?.writeText("") }
+            }
+            notifyGroupsChanged(ctx)
+        } catch (t: Throwable) {
+            Log.e(TAG, "清除分析产物失败: ${t.message}")
+        }
+    }
+
+    /**
+     * 当前应该生效的签名文本（模块 App 侧判定，Provider 直接把它回传给微信进程）。
+     * 优先级：分析产物（版本必须匹配当前微信）> 用户手改的签名 > 内置签名。
+     *
+     * 之所以把分析产物排在最前：它的 revision 是 [SignatureAnalyzer.ANALYZED_REVISION_BASE]，
+     * 远高于内置，微信侧的比较规则自然也会选它；这里再显式排一次，
+     * 是为了让 App 侧显示与微信侧实际生效的是同一份（避免「界面说用了分析产物、Hook 却用内置」）。
+     */
+    fun effectiveSignatureJson(ctx: Context): String? {
+        val v = installedWechatVersion(ctx)
+        if (!v.isNullOrBlank()) analyzedSignatureFor(ctx, v)?.let { return it }
+        return prefs(ctx).getString(KEY_SIGNATURE, null) ?: embeddedSignatureJson()
+    }
+
     /** 读取默认签名 JSON 文本（来自模块 APK 的 raw 资源），供 UI 展示 */
     fun defaultSignatureJson(): String? = embeddedSignatureJson()
 
@@ -368,6 +507,17 @@ object GroupStore {
         ctx.packageManager.getPackageInfo(WeChatKiller.WECHAT_PACKAGE, 0).versionName
     } catch (_: Throwable) {
         null
+    }
+
+    /**
+     * 当前进程的微信版本号。Hook 侧跑在微信进程里，packageName 就是 com.tencent.mm，
+     * 所以用它自己的包信息即可（不需要跨进程查询，也就绕开了包可见性限制）。
+     */
+    fun wechatVersionOf(context: Context): String = try {
+        @Suppress("DEPRECATION")
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+    } catch (_: Throwable) {
+        ""
     }
 
     /** 内置签名声明的微信版本号（wechatVersion 字段，如 "8.0.79"） */
@@ -386,6 +536,22 @@ object GroupStore {
      * 失败则回退到模块内置 raw 资源（一定可用，不依赖任何跨进程通道）。
      */
     fun getSignaturesXposed(context: Context): WeChatSignatures? {
+        // ⓪ 分析器产物镜像：跨进程主通道，Provider 被 AppsFilter 拦时它是唯一能到的路。
+        //    版本必须和当前微信一致（升级微信后旧产物自动失效，回退到内置签名）。
+        runCatching {
+            val f = java.io.File(TMP_SIGNATURE)
+            if (f.canRead()) {
+                val txt = f.readText()
+                if (txt.isNotBlank()) {
+                    val root = JSONObject(txt)
+                    val v = root.optString("wechatVersion", "")
+                    val cur = wechatVersionOf(context)
+                    if (v.isNotBlank() && (cur.isBlank() || v == cur)) {
+                        return WeChatSignatures.fromJson(root)
+                    }
+                }
+            }
+        }
         // 内置签名（res/raw）跟随 APK 版本走，永远是最新的；provider 里可能还是用户
         // 本地保存/上一次装的旧副本。谁 revision 高用谁。
         val embedded = embeddedSignatureJson()
@@ -557,7 +723,7 @@ object GroupStore {
     private fun providerQuery(context: Context?, segment: String): String? {
         if (context == null) return null
         return try {
-            val uri = android.net.Uri.parse("$PROVIDER_URI/$segment")
+            val uri = android.net.Uri.parse("${providerUri(context)}/$segment")
             context.contentResolver.query(uri, null, null, null, null)?.use { cur ->
                 if (cur.moveToFirst()) cur.getString(0) else null
             }.also {
@@ -592,7 +758,9 @@ object GroupStore {
     /** 用 su 预创建镜像文件并设为 666。会阻塞（等待 root 授权），必须在后台线程调用 */
     fun provisionMirrorsWithRoot(): Boolean = try {
         // 运行日志镜像也在这建：Hook 侧落盘、模块 App「运行日志」页读取（见 RunLog）
-        val cmd = listOf(TMP_GROUPS, TMP_SETTINGS, RunLog.TMP_LOG).joinToString(" && ") { "touch $it && chmod 666 $it" }
+        // 签名镜像同理：分析器产物靠它送到微信进程
+        val cmd = listOf(TMP_GROUPS, TMP_SETTINGS, RunLog.TMP_LOG, TMP_SIGNATURE)
+            .joinToString(" && ") { "touch $it && chmod 666 $it" }
         val p = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
         p.outputStream.close()
         p.waitFor() == 0
@@ -627,7 +795,7 @@ object GroupStore {
      */
     private fun notifyGroupsChanged(ctx: Context) {
         try {
-            ctx.contentResolver.notifyChange(android.net.Uri.parse(PROVIDER_URI), null)
+            ctx.contentResolver.notifyChange(android.net.Uri.parse(providerUri(ctx)), null)
         } catch (t: Throwable) {
             Log.e(TAG, "通知分组变更失败: ${t.message}")
         }

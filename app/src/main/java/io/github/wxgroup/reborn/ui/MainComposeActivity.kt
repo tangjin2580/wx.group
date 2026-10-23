@@ -29,4 +29,11 @@ class MainComposeActivity : ComponentActivity() {
             AppRoot(vm = vm)
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        // 主题/分组可能在 ThemeActivity 或微信侧被改过（设置镜像以 /data/local/tmp 为准），
+        // 回到本页必须重读，否则切完主题回来页面还是旧配色（真机实测复现过）
+        vm.refreshAll()
+    }
 }

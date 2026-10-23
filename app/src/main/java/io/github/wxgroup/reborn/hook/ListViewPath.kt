@@ -43,9 +43,23 @@ internal fun ConversationGroupHook.installListViewPath(loader: ClassLoader, sig:
     log("ListView 分支: 适配器 = ${clazz.name} (loader=${clazz.classLoader?.javaClass?.simpleName})")
 
     // 适配器自己声明的位置方法（按「方法名 + 参数个数 + 非 bridge」定位）
-    hookAdapterMethod(clazz, "getCount", 0, "ListViewGetCount")
-    hookAdapterMethod(clazz, "getView", 3, "ListViewGetView")
+    val okCount = hookAdapterMethod(clazz, "getCount", 0, "ListViewGetCount")
+    val okView = hookAdapterMethod(clazz, "getView", 3, "ListViewGetView")
     hookAdapterMethod(clazz, "getItem", 1, "ListViewGetItem")
+
+    // ⚠️ 类名命中 ≠ 真的是会话适配器。8.0.78（3180）实测：签名里的 `iq5/a1` 类还在，
+    // 但 getCount/getView/getItem 一个都声明不出来（真正的会话适配器已经是 jo5.y0）；
+    // 这时候如果继续占着 legacyAdapterClass，动态锚定会被 `if (legacyAdapterClass != null) return`
+    // 直接短路 —— 结果是「类挂上了、钩子没装上」，列表既不渲染收纳组也不收拢，且不报错。
+    // 所以关键方法没挂上就把位子让出来，交给宿主锚定去收编真实适配器。
+    if (!okCount || !okView) {
+        legacyAdapterClass = null
+        log("ListView 分支放弃: ${clazz.name} 上缺少 getCount/getView（签名类名仍在但已不是会话适配器）→ 交给动态锚定")
+        // 菜单宿主同样按版本换名字，签名里那份多半也失联了 —— 让 DexKit 出候选再补挂。
+        DexKitResolver.onMenuCandidates = { names -> hookMenuCandidates(loader, names) }
+        DexKitResolver.menuCandidates?.takeIf { it.isNotEmpty() }?.let { hookMenuCandidates(loader, it) }
+        DexKitResolver.resolveAsync(appContext)
+    }
 
     // 继承自 BaseAdapter 的方法，用实例守卫限流到会话适配器（幂等：动态解析路径可能已装）
     installBaseAdapterHooks()
@@ -267,14 +281,103 @@ internal fun ConversationGroupHook.k4Of(row: Any?): Any? {
 private val TALKER_METHOD_CANDIDATES = arrayOf("f1", "i1")
 
 /**
- * 从会话对象 k4 上取 talker。
- * 8.0.78 是 k4.i1()（父类 im/j2），8.0.79 父类改成 hn/j2 后变成 f1()。
- * 兜底：候选名全失联时结构反查 —— 扫 k4 上「无参返回 String 且值长得像 wxid/群号」
- * 的方法（有真实实例可探，命中即缓存；失败也缓存，避免每次渲染都扫）。
+ * talker 字段名候选。`field_` 前缀 = 微信数据库列名，**不参与混淆**，跨版本最稳。
+ *
+ * 为什么要加这一层：混淆方法名（`f1`/`i1`）每个版本都会重排，一旦失联，
+ * `talkerOf` 全线返回 null → 主列表里「已加入分组的会话」一条都收不拢
+ * （表现为 250 行全显示、日志里 收拢=0）。数据库列名不会变，理应作为第一来源。
  */
+private val TALKER_FIELD_NAMES = arrayOf("field_username", "field_talker")
+
+/**
+ * k4 类 → 该类的 username 字段（沿继承链解析一次；找不到也缓存 null，避免每行都扫）。
+ *
+ * ⚠️ 函数名叫 `usernameFieldOf` 而不是 `talkerFieldOf`：后者已经被
+ * [ConversationGroupHook.talkerFieldOf]（RecyclerView 分支，参数是「行对象」）占用了。
+ * 同名的话 Kotlin 会优先解析到隐式接收者的成员扩展，这里传进去的 Class 被当成行对象扫，
+ * 永远返回 null —— 这个坑已经踩过一次。
+ */
+private val usernameFieldCache = java.util.Collections.synchronizedMap(HashMap<String, Field?>())
+
+/**
+ * @param names 候选字段名（签名优先 + 代码内默认）。
+ *   缓存键带上候选列表：签名换过（例如应用了分析器产物）时不会复用旧结果。
+ */
+private fun usernameFieldOf(cls: Class<*>, names: List<String>): Field? {
+    val ck = cls.name + "|" + names.joinToString(",")
+    if (usernameFieldCache.containsKey(ck)) return usernameFieldCache[ck]
+    var hit: Field? = null
+    for (n in names) {
+        val f = XposedHelpers.fieldOf(cls, n) ?: continue
+        f.isAccessible = true
+        hit = f
+        break
+    }
+    usernameFieldCache[ck] = hit
+    return hit
+}
+
+/**
+ * 从会话对象 k4 上取 talker。
+ *
+ * 取值顺序（越靠前越可信）：
+ *   ① `field_username` / `field_talker` —— 数据库列名，不参与混淆。
+ *      ⚠️ 这里**不能**套 [looksLikeUsername]：真实的 username 里有一批很短的
+ *      （`qqmail` / `weixin` / `notifymessage` 这类系统号与公众号），
+ *      启发式会把它们误杀，结果就是这些会话永远收不进分组。
+ *   ② 混淆方法 `f1`（8.0.79）/ `i1`（8.0.78），命中后按类缓存。
+ *   ③ 结构反查：扫 k4 上「无参返回 String 且值长得像 wxid/群号」的方法
+ *      （有真实实例可探，命中即缓存；失败也缓存，避免每次渲染都扫）。
+ */
+/**
+ * 把「运行时真实取到值的类名 / 字段名」记下来并回传一次。
+ *
+ * 为什么需要它：内置分析器在模块 App 里做**静态**反查，有几项它拿不准 ——
+ * 会话适配器（微信里有一百多个 BaseAdapter 子类长得一样）、field_flag /
+ * field_unReadCount（DexKit 的字段索引在这份 dex 上认不出这两个名字）。
+ * 但 Hook 在微信进程里是**真的**从这些字段取到了置顶位与未读数，
+ * 所以它写下来的名字是最可靠的签名来源：静态反查只是没有真机时的兜底。
+ *
+ * 只在首次收拢诊断时写一次（[runtimeProbeLogged]），不刷屏。
+ */
+internal fun ConversationGroupHook.recordRuntimeProbe(k4: Any?) {
+    if (runtimeProbeLogged) return
+    val m = runtimeProbe
+    legacyAdapterClass?.name?.let { m.putIfAbsent("adapter", it) }
+    val cls = k4?.javaClass ?: return
+    m.putIfAbsent("storage", cls.name)
+    usernameFieldOf(cls, fieldNames("username", TALKER_FIELD_NAMES.toList()))?.name
+        ?.let { m.putIfAbsent("username", it) }
+    pinnedFieldOf(cls)?.name?.let { m.putIfAbsent("flag", it) }
+    unreadFieldsOf(cls).firstOrNull()?.name?.let { m.putIfAbsent("unread", it) }
+    if (m.isEmpty()) return
+    runtimeProbeLogged = true
+    log("运行时实测: " + m.entries.joinToString(" ") { "${it.key}=${it.value}" })
+}
+
+/**
+ * 补记一项运行时实测值（例如长按菜单宿主类名）。
+ * 首次那批已经写过日志之后再新增的项，单独补一条，保证分析器能读到全部。
+ */
+internal fun ConversationGroupHook.noteRuntimeProbe(key: String, value: String) {
+    if (value.isBlank()) return
+    if (runtimeProbe.putIfAbsent(key, value) == null && runtimeProbeLogged) {
+        log("运行时实测(补充): $key=$value")
+    }
+}
+
 internal fun ConversationGroupHook.talkerOf(k4: Any?): String? {
     if (k4 == null) return null
     val cls = k4.javaClass
+    val f = usernameFieldOf(cls, fieldNames("username", TALKER_FIELD_NAMES.toList()))
+    if (f != null) {
+        val v = try {
+            f.get(k4) as? String
+        } catch (_: Throwable) {
+            null
+        }
+        if (!v.isNullOrBlank()) return v
+    }
     val known = talkerMethodCache[cls]
     if (known != null) {
         if (known.isEmpty()) return null  // 已知失联，别再试
@@ -327,8 +430,9 @@ internal val unreadFieldsCache = java.util.concurrent.ConcurrentHashMap<Class<*>
 
 internal fun ConversationGroupHook.unreadFieldsOf(cls: Class<*>): List<Field> =
     unreadFieldsCache.getOrPut(cls) {
-        val out = ArrayList<Field>(UNREAD_FIELD_NAMES.size)
-        for (n in UNREAD_FIELD_NAMES) {
+        val names = fieldNames("unread", UNREAD_FIELD_NAMES)
+        val out = ArrayList<Field>(names.size)
+        for (n in names) {
             val f = XposedHelpers.fieldOf(cls, n) ?: continue
             if (out.none { it === f }) out.add(f)
         }
@@ -393,14 +497,16 @@ internal fun ConversationGroupHook.unreadOf(k4: Any?): Int {
  */
 private const val PINNED_FLAG_BIT = 0x4000000000000000L
 
-/** k4 类 → 该类的 field_flag 字段（沿继承链解析一次；找不到也缓存 null，避免每行都扫） */
-private val pinnedFieldCache = java.util.Collections.synchronizedMap(HashMap<Class<*>, Field?>())
+/** k4 类 → 该类的置顶标记字段（沿继承链解析一次；找不到也缓存 null，避免每行都扫） */
+private val pinnedFieldCache = java.util.Collections.synchronizedMap(HashMap<String, Field?>())
 
-/** 取某个会话对象上的 field_flag；没有该字段返回 null */
-private fun pinnedFieldOf(cls: Class<*>): Field? {
-    if (pinnedFieldCache.containsKey(cls)) return pinnedFieldCache[cls]
-    val hit = XposedHelpers.fieldOf(cls, "field_flag")?.also { it.isAccessible = true }
-    pinnedFieldCache[cls] = hit
+/** 取某个会话对象上的置顶标记字段（默认 field_flag）；没有返回 null */
+private fun ConversationGroupHook.pinnedFieldOf(cls: Class<*>): Field? {
+    val n = fieldName("flag", "field_flag")
+    val ck = cls.name + "|" + n
+    if (pinnedFieldCache.containsKey(ck)) return pinnedFieldCache[ck]
+    val hit = XposedHelpers.fieldOf(cls, n)?.also { it.isAccessible = true }
+    pinnedFieldCache[ck] = hit
     return hit
 }
 
@@ -482,10 +588,14 @@ private val DISPLAY_NAME_FIELDS = listOf("field_conRemark", "field_nickname", "f
 /** k4 类 → 显示名候选字段（沿继承链解析一次） */
 internal val displayNameFieldsCache = java.util.concurrent.ConcurrentHashMap<Class<*>, List<Field>>()
 
-private fun displayNameFieldsOf(cls: Class<*>): List<Field> =
+/** 备注名候选（签名可覆盖，对应 fields.remark） */
+private val REMARK_FIELDS = listOf("field_conRemark")
+
+private fun ConversationGroupHook.displayNameFieldsOf(cls: Class<*>): List<Field> =
     displayNameFieldsCache.getOrPut(cls) {
-        val out = ArrayList<Field>(DISPLAY_NAME_FIELDS.size)
-        for (n in DISPLAY_NAME_FIELDS) {
+        val names = fieldNames("remark", REMARK_FIELDS) + fieldNames("nickname", DISPLAY_NAME_FIELDS)
+        val out = ArrayList<Field>(names.size)
+        for (n in names) {
             val f = XposedHelpers.fieldOf(cls, n) ?: continue
             if (out.none { it === f }) out.add(f)
         }
@@ -613,6 +723,25 @@ internal fun ConversationGroupHook.buildLegacyModel(a: Any, realCount: Int, grou
     // username -> 归属分组（第一个命中的分组胜出，避免重复收纳）
     val owner = HashMap<String, String>()
     for (g in groups) for (mm in g.members) owner.putIfAbsent(mm, g.id)
+
+    // 收拢诊断：只打一次。用来回答「为什么已加入分组的会话还留在主列表」——
+    // 关键看 talker 取没取到、分组成员在真实列表里命中了几个。
+    if (!foldDiagLogged && realCount > 0 && owner.isNotEmpty()) {
+        foldDiagLogged = true
+        val r0 = rows?.firstOrNull()
+        val k0 = k4Of(r0)
+        val hit = owner.keys.count { posOf.containsKey(it) }
+        log(
+            "收拢诊断: 行类=${r0?.javaClass?.name}, k4类=${k0?.javaClass?.name}, " +
+                "username字段=${k0?.javaClass?.let { usernameFieldOf(it, fieldNames("username", TALKER_FIELD_NAMES.toList()))?.name } ?: "无"}, " +
+                "talker样例=${talkerOf(k0)}, 有talker行=${names.count { it != null }}/$realCount, " +
+                "分组成员=${owner.size}, 命中=$hit, 置顶=${pinned.size}"
+        )
+        // 顺手把「实际取到值的类名/字段名」回传给模块 App —— 内置分析器拿它当
+        // 最高置信度的结论（静态反查拿不准的适配器类名、field_flag 这些，
+        // 运行时这里是唯一真凭实据）。
+        recordRuntimeProbe(k0)
+    }
 
     /** 某个分组的成员在真实列表里的下标（只取真正归属它的） */
     fun membersOf(g: WxGroup): List<Int> {

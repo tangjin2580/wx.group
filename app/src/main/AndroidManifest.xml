@@ -63,7 +63,7 @@
         <!-- 跨进程数据桥：让微信能读取本模块在私有存储里的分组/签名 -->
         <provider
             android:name=".core.GroupProvider"
-            android:authorities="io.github.wxgroup.groups"
+            android:authorities="${applicationId}.groups"
             android:exported="true"
             android:grantUriPermissions="false" />
     </application>

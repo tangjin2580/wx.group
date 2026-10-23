@@ -167,8 +167,8 @@ internal fun ConversationGroupHook.markTalkerRead(talker: String, k4: Any? = nul
         val ok = XposedHelpers.callMethod(st, MARK_READ_METHOD, talker) as? Boolean ?: false
         if (ok && k4 != null) {
             // 两个列都清：群消息免打扰的会话未读记在 unReadMuteCount 上
-            XposedHelpers.setObjectField(k4, "field_unReadCount", 0)
-            XposedHelpers.setObjectField(k4, "field_unReadMuteCount", 0)
+            XposedHelpers.setObjectField(k4, fieldName("unread", "field_unReadCount"), 0)
+            XposedHelpers.setObjectField(k4, fieldName("unreadMute", "field_unReadMuteCount"), 0)
         }
         ok
     } catch (t: Throwable) {

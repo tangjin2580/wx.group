@@ -163,11 +163,14 @@ import java.lang.reflect.Field
         0
     }
 
-    internal fun ConversationGroupHook.rvUsernameAt(a: Any, i: Int): String? {
+    internal fun ConversationGroupHook.rvUsernameAt(a: Any, i: Int): String? =
+        rvK4At(a, i)?.let { talkerOf(it) }
+
+    /** 行 → 会话对象 k4（置顶判定要用，所以单独暴露出来而不是只给 username） */
+    internal fun ConversationGroupHook.rvK4At(a: Any, i: Int): Any? {
         return try {
             val row = rvData(a)?.getOrNull(i) ?: return null
-            val k4 = talkerFieldOf(row)?.get(row) ?: return null
-            talkerOf(k4)
+            talkerFieldOf(row)?.get(row)
         } catch (t: Throwable) {
             null
         }
@@ -242,6 +245,16 @@ import java.lang.reflect.Field
         val owner = HashMap<String, String>()
         for (g in groups) for (mm in g.members) owner.putIfAbsent(mm, g.id)
 
+        // 置顶会话：和 ListView 分支保持一致 —— 已分组的会话一律从主列表收拢，
+        // 但微信里被置顶的会话留在主列表，否则用户长按置顶后会发现「这个对话消失了」。
+        // 取不到 field_flag（跨版本失联）时 pinned 为空，行为退回原来的「全部收拢」。
+        val pinned = HashSet<String>()
+        for (i in 0 until realCount) {
+            val k4 = rvK4At(a, i) ?: continue
+            if (!pinnedOf(k4)) continue
+            talkerOf(k4)?.let { pinned.add(it) }
+        }
+
         val entries = ArrayList<VEntry>()
         val perGroup = LinkedHashMap<String, Int>()
         for (g in groups) {
@@ -259,7 +272,7 @@ import java.lang.reflect.Field
         }
         for (i in 0 until realCount) {
             val u = rvUsernameAt(a, i)
-            if (u != null && owner.containsKey(u)) continue
+            if (u != null && owner.containsKey(u) && u !in pinned) continue
             entries.add(VEntry(TYPE_REAL, null, i))
         }
         return RvModel(realCount, key, entries, perGroup)

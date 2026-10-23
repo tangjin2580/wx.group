@@ -416,6 +416,18 @@ object GroupTheme {
         )
     }
 
+    /**
+     * 铺在 [color] 之上仍然可读的前景色（黑 or 白）。
+     *
+     * 主题主色由用户选（有的很亮、有的很暗），「主色底 + 白字」并不是永远成立，
+     * 所以凡是要把文字放到主色块上的地方（按钮、Switch 滑块）都走这里，
+     * 别各自写死白色。
+     */
+    fun onColorFor(color: Int): Int {
+        val l = 0.2126f * Color.red(color) + 0.7152f * Color.green(color) + 0.0722f * Color.blue(color)
+        return if (l > 0.5f) Color.BLACK else Color.WHITE
+    }
+
     /** 两个颜色是否「过于接近」（给相邻分组挑色时用来跳过相近色） */
     fun closeEnough(a: Int, b: Int, threshold: Int = 24): Boolean =
         abs(Color.red(a) - Color.red(b)) < threshold &&

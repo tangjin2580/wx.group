@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- ── 外壳（导航 / 返回） ───────────────────────────────────────── -->
+    <string name="nav_back">返回</string>
+    <string name="tab_home">首页</string>
+    <string name="tab_groups">分组</string>
+    <string name="tab_settings">设置</string>
+
     <string name="app_name">微信分组</string>
     <string name="xposed_description">微信会话/联系人分组</string>
 
@@ -72,6 +78,29 @@
     <string name="theme_preview_sub">8 个成员 · 3 条未读</string>
     <string name="theme_applied">已应用，微信会话列表会自动更新</string>
 
+    <!-- ── Compose 版主题页（完整组件预览） ───────────────────────────── -->
+    <string name="theme_mode_section">深浅色模式</string>
+    <string name="theme_list_section">内置主题</string>
+    <string name="theme_preview_hint">每套主题都按真实分组行渲染预览：选中态、图标底色、未读角标与正文对比，所见即所得。点卡片即可应用，无需重启微信。</string>
+    <string name="theme_in_use">正在使用</string>
+    <string name="theme_preview_row_selected">家人的群（选中）</string>
+    <string name="theme_preview_row_selected_sub">12 个成员 · 妈妈：晚上回来吃饭吗</string>
+    <string name="theme_preview_row_normal">项目周会</string>
+    <string name="theme_preview_row_normal_sub">26 个成员</string>
+    <string name="theme_preview_button">主操作</string>
+    <string name="theme_preview_secondary">次要</string>
+    <string name="theme_palette_primary">主色</string>
+    <string name="theme_palette_accent">强调</string>
+    <string name="theme_palette_icon">图标底</string>
+    <string name="theme_palette_row">行底色</string>
+    <string name="theme_palette_text">正文</string>
+    <string name="theme_group_colors_section">单组独立配色</string>
+    <string name="theme_group_colors_hint">给单个分组指定颜色后，它会脱离主题轮转；点分组行展开候选色，改完立即写入。</string>
+    <string name="theme_group_empty_msg">先到「分组」页新建一个，再回来给它单独配色</string>
+    <string name="theme_group_following">跟随主题</string>
+    <string name="theme_group_following_short">跟随</string>
+    <string name="theme_group_custom_color">自定义颜色</string>
+
     <!-- 条目左侧图标用的单字（纯装饰，已设 importantForAccessibility=no） -->
     <string name="wg_icon_groups">组</string>
     <string name="wg_icon_signature">签</string>
@@ -91,6 +120,31 @@
     <string name="group_mute">免打扰</string>
     <string name="group_members">管理成员</string>
     <string name="group_empty">还没有分组，点下方「新建分组」按钮创建一个。</string>
+    <!-- ── 分组列表（Compose）：命名与删除 ───────────────────────────── -->
+    <string name="group_list_empty">还没有分组，点上方创建一个</string>
+    <string name="group_name_error_blank">名称不能为空</string>
+    <string name="group_name_error_too_long">名称不能超过 %1$d 个字</string>
+    <string name="group_created">已创建「%1$s」</string>
+    <string name="group_renamed">已重命名为「%1$s」</string>
+    <string name="group_deleted">已删除「%1$s」</string>
+    <string name="group_delete_confirm_title">删除分组</string>
+    <string name="group_delete_confirm_msg">确定删除「%1$s」？\n\n删除后这个收纳组连同「哪些会话属于它」的记录一起移除；微信里的会话和聊天记录不受影响，只是回到会话列表。</string>
+    <string name="group_drag_sort">拖动排序</string>
+
+    <!-- 列表状态与搜索（Compose 分组页） -->
+    <string name="group_search_hint">搜索分组名称</string>
+    <string name="group_search_clear">清空</string>
+    <string name="group_search_no_match">没有匹配的分组</string>
+    <string name="group_search_no_match_msg">换个关键词，或清空重试</string>
+    <string name="group_loading">正在读取分组…</string>
+    <string name="group_load_failed">读取失败</string>
+    <string name="group_load_failed_msg">没能读出本地分组数据：%1$s\n可以重试，或到设置页导出备份后重新导入。</string>
+    <string name="group_retry">重试</string>
+    <string name="group_refresh">刷新列表</string>
+    <string name="group_list_empty_msg">新建后，微信会话列表顶部就会出现收纳组</string>
+    <string name="group_pinned_tag">置顶</string>
+    <string name="group_undo">撤销</string>
+
     <string name="group_members_title">成员（%1$d）</string>
     <string name="group_members_empty">该分组还没有成员</string>
     <string name="group_members_remove_hint">点击成员可将其移出分组</string>
@@ -138,4 +192,38 @@
     <string name="log_copied">已复制到剪贴板</string>
     <string name="log_cleared">已清空（微信侧缓冲会在下次落盘时同步清除）</string>
     <string name="log_clear_fail">清空失败（镜像不可写）</string>
+
+    <!-- ── 签名分析器（内置 DexKit 反查） ───────────────────────────── -->
+    <string name="analyzer_title">签名分析器</string>
+    <string name="analyzer_intro_title">自动反查类名与字段名</string>
+    <string name="analyzer_intro_body">微信每个版本都会重排混淆类名，签名 JSON 写死的那一份迟早对不上。分析器直接读已装微信的 dex（base.apk + Tinker 补丁），用 DexKit 反查会话适配器、菜单宿主、会话对象类与字段名，产出针对当前版本的签名。需要 root 授权才能读到 Tinker 补丁目录。</string>
+    <string name="analyzer_wechat_version">已装微信版本</string>
+    <string name="analyzer_not_installed">未安装</string>
+    <string name="analyzer_no_wechat">没检测到微信，无法分析。先安装微信再回来。</string>
+    <string name="analyzer_cached_versions">已缓存产物</string>
+    <string name="analyzer_cached_none">无</string>
+    <string name="analyzer_start">开始分析</string>
+    <string name="analyzer_rerun">重新分析</string>
+    <string name="analyzer_progress_prepare">准备中…</string>
+    <string name="analyzer_result_section">反查结论</string>
+    <string name="analyzer_count_ok">已确定 %1$d</string>
+    <string name="analyzer_count_ambiguous">多候选 %1$d</string>
+    <string name="analyzer_count_missing">未找到 %1$d</string>
+    <string name="analyzer_nothing_resolved">一项都没确定下来：dex 可能读不到（root 被拒）或微信结构与预期不符。可以先打开一次微信会话列表（让 Hook 侧留下运行时实测值）再回来分析。</string>
+    <string name="analyzer_runtime_used">其中 %1$d 项来自 Hook 侧运行时实测（比静态反查可信）</string>
+    <string name="analyzer_level_ok">已确定</string>
+    <string name="analyzer_level_ambiguous">多候选</string>
+    <string name="analyzer_level_missing">未找到</string>
+    <string name="analyzer_candidates">%1$d 个候选（未采用，保留原值）</string>
+    <string name="analyzer_not_found">未找到（保留原值）</string>
+    <string name="analyzer_apply">应用到微信 %1$s</string>
+    <string name="analyzer_applied">已应用：微信 %1$s。重启微信后生效。</string>
+    <string name="analyzer_apply_fail">应用失败（签名 JSON 无效）</string>
+    <string name="analyzer_apply_hint">产物按微信版本缓存：升级微信后旧产物自动失效，回退到内置签名。只覆盖「能确定」的项，多候选的保留原值。</string>
+    <string name="analyzer_copy">复制签名 JSON</string>
+    <string name="analyzer_copied">已复制到剪贴板</string>
+    <string name="analyzer_cached_section">已缓存的分析产物</string>
+    <string name="analyzer_cached_hint">当前微信版本匹配的那份会自动生效。清除后回退到内置签名。</string>
+    <string name="analyzer_clear">清除</string>
+    <string name="analyzer_cleared">已清除微信 %1$s 的分析产物</string>
 </resources>

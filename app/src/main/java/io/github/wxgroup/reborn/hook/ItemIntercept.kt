@@ -252,6 +252,10 @@ private class OurItemLongClickListener(
         try {
             if (host.isOurListView(parent)) {
                 val r = host.resolveTap(parent, view, position)
+                if (host.longPressDiagLogged < 20) {
+                    host.longPressDiagLogged++
+                    host.log("长按诊断(监听器): position=$position kind=${r.kind} → ${r.position}")
+                }
                 when (r.kind) {
                     TAP_SECTION -> return true   // 小节标题：不响应
                     TAP_FOLDER -> return host.handleHeaderLongPress(r.view, host.sortedGroups().firstOrNull { it.id == r.groupId } ?: return true)
@@ -295,6 +299,10 @@ internal fun ConversationGroupHook.installItemLongPressInterceptor() {
                         val pos = param.args.getOrNull(1) as? Int ?: return
                         val v = param.args.getOrNull(0) as? View
                         val r = resolveTap(parent, v, pos)
+                        if (longPressDiagLogged < 20) {
+                            longPressDiagLogged++
+                            log("长按诊断(performLongPress): pos=$pos kind=${r.kind} → 转发位置=${r.position}, view=${v?.javaClass?.simpleName}, 模型=${legacyModel?.entries?.size}")
+                        }
                         if (r.kind == TAP_FOLDER) {
                             param.result = handleHeaderLongPress(r.view, sortedGroups().firstOrNull { it.id == r.groupId } ?: return)
                             return
