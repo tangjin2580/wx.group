@@ -1,4 +1,4 @@
-# 微信分组·重生 (wxgroup-reborn)
+# 微信分组 (wxgroup-reborn)
 
 > 微信会话分组 LSPosed 模块 —— 在会话列表里做「收纳组」（无联网、无账号、完全离线）
 
@@ -20,7 +20,7 @@
 ## 安装与激活
 
 1. 从 [Releases](https://github.com/tangjin2580/wx.group/releases/latest) 下载 `app-release.apk` 安装。
-2. 打开 **LSPosed Manager → 模块**，勾选启用 **微信分组·重生**，作用域勾选 **微信 (com.tencent.mm)**。
+2. 打开 **LSPosed Manager → 模块**，勾选启用 **微信分组**，作用域勾选 **微信 (com.tencent.mm)**。
 3. **（一次性，需 root）预创建跨进程镜像文件**——模块 App 进程在 SELinux 下无法在 `/data/local/tmp` 新建文件，只能覆盖已存在的世界可写文件：
    ```bash
    adb shell su -c 'for f in groups settings; do p=/data/local/tmp/wxgroup_reborn_$f.json; touch $p && chmod 666 $p; done'
@@ -170,6 +170,11 @@ Xposed Hook 跑在**微信进程**里，分组数据由**模块 App 进程**创�
 ---
 
 ## 更新日志
+
+### v1.1.0（2026-10-23）
+
+- 应用更名：**微信分组·重生 → 微信分组**（applicationId 与数据保持不变，覆盖安装即改名，分组数据不丢）。
+- README 全面重写到当前架构与用法。
 
 ### v1.0.1（2026-10-23）
 

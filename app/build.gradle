@@ -15,8 +15,8 @@ android {
         // （CI 里从 tag 推导版本、或本地做灰度包时用得上）
         def vcProp = project.findProperty('versionCodeOverride')
         def vnProp = project.findProperty('versionNameOverride')
-        versionCode vcProp == null ? 8 : (vcProp as Integer)
-        versionName vnProp == null ? '1.0.1' : vnProp.toString()
+        versionCode vcProp == null ? 9 : (vcProp as Integer)
+        versionName vnProp == null ? '1.1.0' : vnProp.toString()
     }
 
     // ── 正式签名（条件启用）──────────────────────────────────────────────
