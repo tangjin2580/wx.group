@@ -57,7 +57,7 @@
 
 版本不匹配时有三条路：
 
-1. **在线获取最新**（推荐）：从本仓库 `main` 分支拉最新的 `wechat_signatures.json`——适配新微信只需更新仓库文件，不用发新版 App。
+1. **在线获取最新**（推荐）：App 内置四级源逐个回退——① 私有 WebDAV 网盘镜像（Cloudflare 加速，国内直连最稳，凭据内置）→ ② jsDelivr CDN → ③ GitHub API contents → ④ raw.githubusercontent.com。适配新微信只需更新仓库文件，不用发新版 App。
 2. **填充内置**：一键填入当前 APK 内置的签名。
 3. **手动逆向**：用 jadx 之类工具按「方法名 + params + ret」三要素填写。`methodName` 为空或含 `TODO` 的条目会被自动跳过，不会崩微信。
 
@@ -170,6 +170,11 @@ Xposed Hook 跑在**微信进程**里，分组数据由**模块 App 进程**创�
 ---
 
 ## 更新日志
+
+### v1.2.1（2026-10-23）
+
+- **修「在线获取签名 404」**：签名库 v1.0.1 迁 assets 后在线源仍指向旧 res/raw 路径。
+- 在线源升级为四级回退，并新增**私有 WebDAV 网盘镜像**（r2pan，Cloudflare 加速国内直连）为第一优先源；jsDelivr / GitHub API / raw 依次兜底，失败时汇总各源原因。
 
 ### v1.2.0（2026-10-23）
 

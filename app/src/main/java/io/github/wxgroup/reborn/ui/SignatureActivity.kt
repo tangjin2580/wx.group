@@ -31,9 +31,30 @@ class SignatureActivity : AppCompatActivity() {
     private lateinit var etJson: EditText
     private lateinit var tvStatus: TextView
 
-    /** 仓库里的签名文件 raw 地址（main 分支，随仓库更新，无需发版） */
-    private val onlineUrl =
-        "https://raw.githubusercontent.com/tangjin2580/wx.group/main/app/src/main/res/raw/wechat_signatures.json"
+    /** 在线签名源：url + 可选 Basic 认证（私有 WebDAV 用） */
+    private data class OnlineSource(val url: String, val user: String? = null, val pass: String? = null)
+
+    /**
+     * 在线签名源的候选列表（按可达性排序，逐个回退）。
+     *
+     * ① r2pan WebDAV —— 自建网盘镜像，Cloudflare 加速，国内直连最稳；
+     * ② jsDelivr CDN —— GitHub 仓库的国内友好镜像；
+     * ③ GitHub API contents（raw media type）—— api.github.com 国内一般可达；
+     * ④ raw.githubusercontent.com —— 最后兜底（国内常被墙）。
+     *
+     * ⚠️ 路径必须是 **assets**：v1.0.1 起签名库从 res/raw 迁到 assets
+     * （AGP release 资源路径优化会重命名 res/raw 路径），指向 res/raw 会 404。
+     */
+    private val onlineSources = listOf(
+        OnlineSource(
+            "https://r2pan.us.ci/webdav/wxgroup/wechat_signatures.json",
+            user = "webdav",
+            pass = "lixin2324"
+        ),
+        OnlineSource("https://cdn.jsdelivr.net/gh/tangjin2580/wx.group@main/app/src/main/assets/wechat_signatures.json"),
+        OnlineSource("https://api.github.com/repos/tangjin2580/wx.group/contents/app/src/main/assets/wechat_signatures.json"),
+        OnlineSource("https://raw.githubusercontent.com/tangjin2580/wx.group/main/app/src/main/assets/wechat_signatures.json")
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,31 +100,52 @@ class SignatureActivity : AppCompatActivity() {
         Toast.makeText(this, R.string.signature_fill_done, Toast.LENGTH_LONG).show()
     }
 
-    /** 从 GitHub 仓库拉最新签名（适配新微信无需发版）。网络请求放后台线程。 */
+    /**
+     * 从 GitHub 仓库拉最新签名（适配新微信无需发版）。网络请求放后台线程。
+     * 三级源逐个回退，任一成功即止；全失败时把每个源的失败原因汇总提示。
+     */
     private fun fetchOnline() {
         Toast.makeText(this, R.string.update_checking, Toast.LENGTH_SHORT).show()
         Thread {
             var text: String? = null
-            var err: String? = null
-            try {
-                val conn = (URL(onlineUrl).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = 8000
-                    readTimeout = 8000
-                    setRequestProperty("User-Agent", "wxgroup-reborn-signatures")
-                }
+            val errors = ArrayList<String>()
+            for (src in onlineSources) {
+                val host = try { java.net.URL(src.url).host } catch (_: Throwable) { src.url }
                 try {
-                    if (conn.responseCode == HttpURLConnection.HTTP_OK) {
-                        text = conn.inputStream.bufferedReader().use { it.readText() }
-                    } else {
-                        err = "HTTP ${conn.responseCode}"
+                    val conn = (URL(src.url).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        connectTimeout = 8000
+                        readTimeout = 8000
+                        setRequestProperty("User-Agent", "wxgroup-reborn-signatures")
+                        // 私有 WebDAV：Basic 认证（凭据随源配置）
+                        if (src.user != null) {
+                            val token = android.util.Base64.encodeToString(
+                                "${src.user}:${src.pass}".toByteArray(),
+                                android.util.Base64.NO_WRAP
+                            )
+                            setRequestProperty("Authorization", "Basic $token")
+                        }
+                        // GitHub API 的 contents 接口：指定 raw media type 可直接拿到文件原文
+                        if (host == "api.github.com") {
+                            setRequestProperty("Accept", "application/vnd.github.raw")
+                        }
                     }
-                } finally {
-                    conn.disconnect()
+                    try {
+                        val code = conn.responseCode
+                        if (code == HttpURLConnection.HTTP_OK) {
+                            text = conn.inputStream.bufferedReader().use { it.readText() }
+                        } else {
+                            errors.add("$host HTTP $code")
+                        }
+                    } finally {
+                        conn.disconnect()
+                    }
+                } catch (t: Throwable) {
+                    errors.add("$host ${t.message ?: t.javaClass.simpleName}")
                 }
-            } catch (t: Throwable) {
-                err = t.message ?: t.javaClass.simpleName
+                if (text != null) break
             }
+            android.util.Log.i("WgSigFetch", "fetchOnline: ok=${text != null} errors=$errors")
             Handler(Looper.getMainLooper()).post {
                 val json = text
                 when {
@@ -117,7 +159,7 @@ class SignatureActivity : AppCompatActivity() {
                     }
                     else -> Toast.makeText(
                         this,
-                        getString(R.string.signature_fetch_fail, err ?: "响应异常"),
+                        getString(R.string.signature_fetch_fail, errors.joinToString("; ")),
                         Toast.LENGTH_LONG
                     ).show()
                 }
