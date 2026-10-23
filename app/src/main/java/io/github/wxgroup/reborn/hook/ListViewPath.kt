@@ -216,10 +216,11 @@ internal fun ConversationGroupHook.legacyRows(adapter: Any): List<*>? {
  * 「d」失联时结构反查：行上类型落在 com.tencent.mm.storage 包里的字段
  * （storage 包名是稳定的，混淆只动最后一段）。
  */
-internal fun ConversationGroupHook.k4Of(row: Any): Any? {
+internal fun ConversationGroupHook.k4Of(row: Any?): Any? {
+    row ?: return null
     XposedHelpers.getObjectField(row, "d")?.let { return it }
     val cls = row.javaClass
-    val f: Field? = if (rowK4FieldOwner === cls) {
+    val f: Field? = (if (rowK4FieldOwner === cls) {
         rowK4Field
     } else {
         var hit: Field? = null
@@ -233,7 +234,7 @@ internal fun ConversationGroupHook.k4Of(row: Any): Any? {
         rowK4Field = hit
         rowK4FieldOwner = cls
         hit
-    } ?: return null
+    }) ?: return null
     return runCatching { f.get(row) }.getOrNull()
 }
 
