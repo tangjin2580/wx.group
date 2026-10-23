@@ -33,6 +33,10 @@ import java.io.File
 /** 已尝试过的「宿主<适配器」组合，防重复校验/重复日志 */
 private val adoptTried = java.util.Collections.synchronizedSet(HashSet<String>())
 
+/** 日志用短类型名（com.tencent.mm.storage.k4 -> k4；内部类 $ -> .） */
+private fun Class<*>.shortTypeName(): String =
+    name.substringAfterLast('.').replace('$', '.')
+
 /**
  * 引导回调里每次都调：签名类没就位时，尝试用宿主锚点 / DexKit 候选动态收编适配器。
  * 校验失败只记一次日志，不会反复打扰。
@@ -64,7 +68,20 @@ internal fun ConversationGroupHook.adoptDynamicAdapter(hostCls: Class<*>, adapte
         null
     }
     if (rows == null) {
-        log("动态解析放弃: 宿主命中 ${hostCls.name} 但适配器 ${cls.name} 找不到行容器字段")
+        // 诊断：把适配器（含父类）的字段形状打出来，结构反查再失手也能一眼看出真实结构
+        val shape = StringBuilder()
+        var cc: Class<*>? = cls
+        var n = 0
+        while (cc != null && cc != Any::class.java && n < 8) {
+            for (f in cc.declaredFields) {
+                if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
+                if (shape.isNotEmpty()) shape.append(", ")
+                shape.append("${cc.simpleName}.${f.name}:${f.type.shortTypeName()}")
+            }
+            cc = cc.superclass
+            n++
+        }
+        log("动态解析放弃: 宿主命中 ${hostCls.name} 但适配器 ${cls.name} 找不到行容器字段; 字段[$shape]")
         return
     }
     // ② 行结构校验：行 → 会话对象（k4）→ talker

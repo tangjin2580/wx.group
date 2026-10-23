@@ -172,16 +172,31 @@ internal fun ConversationGroupHook.containerOf(adapter: Any): Any? {
     }
     var found: Field? = XposedHelpers.fieldOf(cls, "r") ?: XposedHelpers.fieldOf(cls, "q")
     if (found == null) {
-        found = cls.declaredFields.firstOrNull { f ->
-            !java.lang.reflect.Modifier.isStatic(f.modifiers) &&
-                !List::class.java.isAssignableFrom(f.type) &&
-                f.type.declaredFields.any { List::class.java.isAssignableFrom(it.type) }
-        }?.also { it.isAccessible = true }
+        // 结构反查：沿适配器继承链找「其类型（含父类）里声明了 List 字段」的对象字段
+        var cc: Class<*>? = cls
+        while (cc != null && cc != Any::class.java && found == null) {
+            found = cc.declaredFields.firstOrNull { f ->
+                !java.lang.reflect.Modifier.isStatic(f.modifiers) &&
+                    !List::class.java.isAssignableFrom(f.type) &&
+                    typeHasListField(f.type)
+            }?.also { it.isAccessible = true }
+            cc = cc.superclass
+        }
         if (found != null) log("行容器字段结构反查: ${cls.name}.${found.name} (${found.type.name})")
     }
     containerField = found
     containerFieldOwner = cls
     return found?.let { runCatching { it.get(adapter) }.getOrNull() }
+}
+
+/** 类型（含父类链）里有没有 List 字段 */
+private fun typeHasListField(type: Class<*>): Boolean {
+    var c: Class<*>? = type
+    while (c != null && c != Any::class.java) {
+        if (c.declaredFields.any { List::class.java.isAssignableFrom(it.type) }) return true
+        c = c.superclass
+    }
+    return false
 }
 
 /** 会话列表的原始行列表（8.0.79: adapter.r.d；8.0.78: adapter.q.d）。「d」失联时结构反查容器里的 List 字段。 */
