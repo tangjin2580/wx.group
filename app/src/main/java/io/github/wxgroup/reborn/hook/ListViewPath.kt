@@ -160,70 +160,80 @@ internal fun ConversationGroupHook.legacyHeaderType(param: MethodHookParam): Any
 // ==================================================================================
 
 /**
- * 适配器的「行容器」字段：8.0.79 是 `r`，8.0.78 是 `q`。
- * 解析一次后按适配器类记住，之后每次都是 Field.get —— 不再「先试 r、失败再试 q」。
- * 兜底：名字候选全失联时结构反查 —— 适配器上「其类型里声明了 List 字段」的对象字段
- * （行容器 iq5/f 的结构是稳定的：内含行 List + SparseArray + HashMap）。
+ * 适配器的「行容器」字段：8.0.79(3182) 是 `r`，3200 渠道包又漂回 `q`（类型 f）。
+ * ⚠️ 名字候选会踩坑：3200 的字段 `r` 存在但类型是 g（不是容器），所以名字候选
+ * 不能直接采信 —— 每个候选都必须验证「真掏得出行 List」才算数。
+ * 候选顺序：名字候选(r/q) → 全字段（沿继承链）→ 第一个验证通过的缓存。
  */
 internal fun ConversationGroupHook.containerOf(adapter: Any): Any? {
     val cls = adapter.javaClass
     if (containerFieldOwner === cls) {
         return containerField?.let { runCatching { it.get(adapter) }.getOrNull() }
     }
-    var found: Field? = XposedHelpers.fieldOf(cls, "r") ?: XposedHelpers.fieldOf(cls, "q")
-    if (found == null) {
-        // 结构反查：沿适配器继承链找「其类型（含父类）里声明了 List 字段」的对象字段
-        var cc: Class<*>? = cls
-        while (cc != null && cc != Any::class.java && found == null) {
-            found = cc.declaredFields.firstOrNull { f ->
-                !java.lang.reflect.Modifier.isStatic(f.modifiers) &&
-                    !List::class.java.isAssignableFrom(f.type) &&
-                    typeHasListField(f.type)
-            }?.also { it.isAccessible = true }
-            cc = cc.superclass
+    val candidates = ArrayList<Field>(8)
+    XposedHelpers.fieldOf(cls, "r")?.let { candidates.add(it) }
+    XposedHelpers.fieldOf(cls, "q")?.let { candidates.add(it) }
+    var cc: Class<*>? = cls
+    while (cc != null && cc != Any::class.java) {
+        for (f in cc.declaredFields) {
+            if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
+            if (List::class.java.isAssignableFrom(f.type)) continue
+            if (f.type == cls) continue
+            if (candidates.none { it.name == f.name }) candidates.add(f.also { it.isAccessible = true })
         }
-        if (found != null) log("行容器字段结构反查: ${cls.name}.${found.name} (${found.type.name})")
+        cc = cc.superclass
     }
-    containerField = found
-    containerFieldOwner = cls
-    return found?.let { runCatching { it.get(adapter) }.getOrNull() }
-}
-
-/** 类型（含父类链）里有没有 List 字段 */
-private fun typeHasListField(type: Class<*>): Boolean {
-    var c: Class<*>? = type
-    while (c != null && c != Any::class.java) {
-        if (c.declaredFields.any { List::class.java.isAssignableFrom(it.type) }) return true
-        c = c.superclass
-    }
-    return false
-}
-
-/** 会话列表的原始行列表（8.0.79: adapter.r.d；8.0.78: adapter.q.d）。「d」失联时结构反查容器里的 List 字段。 */
-internal fun ConversationGroupHook.legacyRows(adapter: Any): List<*>? {
-    val container = containerOf(adapter) ?: return null
-    val cls = container.javaClass
-    val f: Field? = if (rowsFieldOwner === cls) {
-        rowsField
-    } else {
-        var hit: Field? = XposedHelpers.fieldOf(cls, "d")?.takeIf {
-            List::class.java.isAssignableFrom(it.type)
-        }
-        if (hit == null) {
-            var cc: Class<*>? = cls
-            while (cc != null && cc != Any::class.java && hit == null) {
-                hit = cc.declaredFields.firstOrNull {
-                    List::class.java.isAssignableFrom(it.type)
-                }?.also { it.isAccessible = true }
-                cc = cc.superclass
-            }
-            if (hit != null) log("行列表字段结构反查: ${cls.name}.${hit.name}")
-        }
-        rowsField = hit
+    for (f in candidates) {
+        val obj = runCatching { f.get(adapter) }.getOrNull() ?: continue
+        val rows = rowsListOf(obj) ?: continue
+        containerField = f
+        containerFieldOwner = cls
         rowsFieldOwner = cls
-        hit
+        log("行容器字段: ${cls.name}.${f.name} (${f.type.name}, rows=${rows.size})")
+        return obj
     }
-    return f?.let { runCatching { it.get(container) as? List<*> }.getOrNull() }
+    containerField = null
+    containerFieldOwner = cls
+    return null
+}
+
+/**
+ * 容器对象里的行 List：名字候选 `d` 优先，失联时结构反查（沿父类链）。
+ * 验证口径是「字段值真的是 List」，而不只是类型声明。命中时顺手缓存 rowsField。
+ */
+private fun ConversationGroupHook.rowsListOf(container: Any): List<*>? {
+    val cls = container.javaClass
+    val candidates = ArrayList<Field>(4)
+    XposedHelpers.fieldOf(cls, "d")?.let { candidates.add(it) }
+    var cc: Class<*>? = cls
+    while (cc != null && cc != Any::class.java) {
+        for (f in cc.declaredFields) {
+            if (!List::class.java.isAssignableFrom(f.type)) continue
+            if (candidates.none { it.name == f.name }) candidates.add(f.also { it.isAccessible = true })
+        }
+        cc = cc.superclass
+    }
+    for (f in candidates) {
+        val v = runCatching { f.get(container) as? List<*> }.getOrNull()
+        if (v != null) {
+            rowsField = f
+            return v
+        }
+    }
+    return null
+}
+
+/** 会话列表的原始行列表（8.0.79: adapter.r.d；3200: adapter.q.的 List 字段）。用 containerOf 缓存的解析结果。 */
+internal fun ConversationGroupHook.legacyRows(adapter: Any): List<*>? {
+    val cls = adapter.javaClass
+    if (containerFieldOwner !== cls) {
+        containerOf(adapter)
+        if (containerFieldOwner !== cls) return null
+    }
+    val cf = containerField ?: return null
+    val rf = rowsField?.takeIf { rowsFieldOwner === cls } ?: return null
+    val container = runCatching { cf.get(adapter) }.getOrNull() ?: return null
+    return runCatching { rf.get(container) as? List<*> }.getOrNull()
 }
 
 /**
