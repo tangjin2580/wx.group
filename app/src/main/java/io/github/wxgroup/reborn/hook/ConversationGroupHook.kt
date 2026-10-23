@@ -233,7 +233,7 @@ class ConversationGroupHook {
     /** 已记录过日志的适配器类名（去重，同名只记一次） */
     internal val adaptersSeen = java.util.Collections.synchronizedSet(HashSet<String>())
     /** 诊断日志条数上限：防某些界面疯狂换适配器刷屏 */
-    internal const val ADAPTER_SEEN_LOG_LIMIT = 40
+    internal val ADAPTER_SEEN_LOG_LIMIT = 40
     /** 「分组顺序」诊断日志计数 */
     internal var orderLogged = 0
     /** 已挂诊断 hook 的「微信点击消费方」类 */
